@@ -1,0 +1,24 @@
+# --- System & Python ---
+__pycache__/
+*.pyc
+venv/
+.env
+
+# --- Configuration ---
+config.ini
+config_local.ini
+
+# --- Data Folders ---
+data/
+*.csv
+*.json
+
+# --- IDE Settings ---
+.vscode/
+.idea/
+
+# --- Executable ---
+dist/
+build/
+*.spec
+*.exe
