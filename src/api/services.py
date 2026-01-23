@@ -1,67 +1,128 @@
-import datetime
+import statistics
 from api.client import call_moodle_api
 
-def get_target_courses(config):
+def get_course_grade_stats(config, course_id):
     """
-    Retrieves all courses from Moodle and filters them based on the 
-    date range specified in config.ini.
-
-    Args:
-        config (dict): The full configuration object.
+    Retrieves and normalizes grade statistics for a given course using bulk extraction.
+    
+    Includes logic for:
+    1. Bulk data retrieval (userid=0 optimization).
+    2. Heuristic detection of scale misconfiguration (100-scale vs 20-scale).
+    3. Filtering of inactive students (grades < 1.0).
+    4. Outlier detection for course averages.
 
     Returns:
-        list: A list of dictionaries, where each dictionary is a course 
-              that started within the target dates.
+        dict: Statistical indicators or None if the course is invalid/empty.
     """
     moodle_config = config['MOODLE']
-    filter_config = config['FILTERS']
     
-    # 1. Parse configuration dates to Unix Timestamp
-    # Moodle stores dates as timestamps (seconds since 1970).
-    try:
-        start_date_str = filter_config['start_date']
-        end_date_str = filter_config['end_date']
-        
-        # Convert "2026-01-01" -> datetime object -> timestamp (int)
-        start_dt = datetime.datetime.strptime(start_date_str, "%Y-%m-%d")
-        end_dt = datetime.datetime.strptime(end_date_str, "%Y-%m-%d")
-        
-        start_ts = int(start_dt.timestamp())
-        end_ts = int(end_dt.timestamp())
-        
-        print(f"Filter Range: {start_date_str} ({start_ts}) to {end_date_str} ({end_ts})")
-
-    except ValueError as e:
-        print(f"Date Configuration Error: {e}")
-        return []
-
-    # 2. Fetch ALL courses (Metadata only)
-    # We increase timeout implicitly in client.py (make sure it's high enough)
-    print("⏳ Downloading course catalog... (This might take a while)")
-    all_courses = call_moodle_api(moodle_config, "core_course_get_courses")
-
-    if not all_courses:
-        print("No courses retrieved from API.")
-        return []
-
-    # 3. Apply Python-side Filtering
-    filtered_courses = []
+    # 1. Bulk Extraction
+    # We use userid=0 to fetch all students in a single API call.
+    grades_data = call_moodle_api(
+        moodle_config, 
+        "gradereport_user_get_grade_items", 
+        courseid=course_id, 
+        userid=0 
+    )
     
-    print(f"Scanning {len(all_courses)} courses for matches...")
+    if not grades_data or 'usergrades' not in grades_data:
+        return None
+
+    all_students = grades_data['usergrades']
     
-    for course in all_courses:
-        # Moodle returns 'startdate' as an integer timestamp
-        c_start = course.get('startdate', 0)
-        c_id = course.get('id')
-        c_name = course.get('fullname')
+    # Minimum sample size filter (exclude individual tutorials or empty courses)
+    if len(all_students) < 4:
+        return None
 
-        # Logic: Is the course start date inside our target window?
-        if start_ts <= c_start <= end_ts:
-            filtered_courses.append({
-                'id': c_id,
-                'fullname': c_name,
-                'startdate': datetime.datetime.fromtimestamp(c_start).strftime('%Y-%m-%d'),
-                'categoryid': course.get('categoryid')
-            })
+    raw_grades_cache = []
+    
+    # Constants for UNIMET Academic Scale
+    TARGET_SCALE = 20.0
+    PASSING_GRADE = 10.0 
+    MIN_VALID_GRADE = 1.0 # Grades below this are considered dropouts/inactive
 
-    return filtered_courses
+    # --- Phase 1: Raw Data Collection ---
+    for student in all_students:
+        for item in student.get('gradeitems', []):
+            if item.get('itemtype') == 'course':
+                raw = item.get('graderaw')
+                gmax = item.get('grademax')
+                
+                if raw is not None and gmax is not None and float(gmax) > 0:
+                    raw_grades_cache.append({
+                        'val': float(raw),
+                        'max': float(gmax)
+                    })
+                break
+    
+    if not raw_grades_cache:
+        return None
+
+    # --- Phase 2: Heuristic Scale Analysis ---
+    # Detects if the professor configured the course total as 100 but uploaded grades in base 20.
+    
+    raw_values = [x['val'] for x in raw_grades_cache]
+    max_values = [x['max'] for x in raw_grades_cache]
+    
+    promedio_crudo = statistics.mean(raw_values)
+    max_configurado = statistics.mode(max_values) 
+    max_nota_real = max(raw_values) 
+
+    apply_scale_correction = False
+    
+    # Logic: If Max is > 25 (e.g., 100), but no student scored above 20, 
+    # and the class average is plausible for base 20 (> 5.0), assume configuration error.
+    if max_configurado > 25.0 and max_nota_real <= 20.0 and promedio_crudo > 5.0:
+        apply_scale_correction = True
+
+    # --- Phase 3: Normalization and Filtering ---
+    final_grades = []
+    
+    for item in raw_grades_cache:
+        val = item['val']
+        gmax = item['max']
+        
+        normalized_grade = 0.0
+        
+        if apply_scale_correction:
+            # Trust the raw value as the true grade
+            normalized_grade = val
+        else:
+            # Standard normalization
+            if gmax != TARGET_SCALE:
+                normalized_grade = (val / gmax) * TARGET_SCALE
+            else:
+                normalized_grade = val
+        
+        # Inactivity Filter: Exclude grades near zero (dropouts)
+        if normalized_grade < MIN_VALID_GRADE:
+            continue
+            
+        final_grades.append(normalized_grade)
+
+    # --- Phase 4: Final Validation and Statistics ---
+    if not final_grades:
+        return None
+
+    average_grade = round(statistics.mean(final_grades), 2)
+    
+    # Quality Control: If course average is still mathematically improbable (< 5.0),
+    # discard the course to avoid polluting the dataset with bad data.
+    if average_grade < 5.0:
+        return None
+
+    stats = {
+        "ind_1_3_nota_promedio": average_grade,
+        "ind_1_3_nota_mediana": round(statistics.median(final_grades), 2),
+        "ind_1_3_nota_desviacion": 0.0,
+        "ind_1_2_aprobacion": 0.0,
+        "total_procesados": len(final_grades)
+    }
+
+    if len(final_grades) > 1:
+        stats["ind_1_3_nota_desviacion"] = round(statistics.stdev(final_grades), 2)
+    
+    approved_count = sum(1 for grade in final_grades if grade >= PASSING_GRADE)
+    stats["ind_1_2_aprobacion"] = round((approved_count / len(final_grades)) * 100, 2)
+
+    return stats
