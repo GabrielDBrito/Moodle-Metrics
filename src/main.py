@@ -2,212 +2,213 @@ import sys
 import os
 import csv
 import threading
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Add project root to system path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+if current_dir not in sys.path: sys.path.insert(0, current_dir)
 
 from utils.config_loader import load_config
-from api.services import get_course_grade_stats
+from api.services import get_full_course_analytics 
+from api.client import get_target_courses 
 
-# --- Configuration Constants ---
-OUTPUT_FILE = "dataset_experiencia_cursos.csv"
+FILE_FACTS = "hechos_curso.csv"
+FILE_DIM_SUBJECT = "dim_asignaturas.csv"
 MAX_WORKERS = 2
-# Keywords to identify non-academic courses (test environments, templates, etc.)
 BLACKLIST_KEYWORDS = ["PRUEBA", "PLANTILLA", "COPIA", "SANDPIT", "TEST"]
 
-# Thread-safe lock for CSV writing
 csv_lock = threading.Lock()
 
-def get_processed_ids(filename):
-    """
-    Reads the existing CSV file to retrieve a set of already processed course IDs.
-    This enables the script to resume from the last checkpoint.
-    """
-    processed = set()
-    if not os.path.exists(filename):
-        return processed
-    
-    with open(filename, mode='r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        try:
-            next(reader) # Skip header
-            for row in reader:
-                if row:
-                    processed.add(int(row[0]))
-        except StopIteration:
-            pass
-    return processed
-
-def init_csv(filename):
-    """
-    Initializes the output CSV file with Spanish headers if it does not exist.
-    Target Dimensional Model headers.
-    """
-    if not os.path.exists(filename):
-        with open(filename, mode='w', newline='', encoding='utf-8') as f:
+def init_csvs():
+    if not os.path.exists(FILE_FACTS):
+        with open(FILE_FACTS, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow([
-                "id_curso", 
-                "nombre_curso", 
-                "id_profesor", 
-                "n_estudiantes_procesados", 
-                "ind_1_3_promedio", 
-                "ind_1_3_mediana", 
-                "ind_1_3_desviacion", 
-                "ind_1_2_aprobacion", 
+                "id_curso", "id_asignatura", "id_profesor", "n_estudiantes",
+                "tasa_cumplimiento", "tasa_aprobacion", "nota_promedio", 
+                "nota_mediana", "nota_desviacion", "pct_activos", "tasa_finalizacion",
+                "pct_metodologia_activa", "relacion_eval_noeval", "tasa_retencion",
+                "indice_procrastinacion", "nivel_feedback", 
                 "fecha_extraccion"
             ])
+    if not os.path.exists(FILE_DIM_SUBJECT):
+        with open(FILE_DIM_SUBJECT, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["id_asignatura", "nombre_materia", "categoria_id"])
 
-def process_single_course(course, config, total_courses, current_index):
+def get_processed_ids():
+    """ Devuelve un set con los IDs de cursos ya procesados en el CSV """
+    processed = set()
+    if os.path.exists(FILE_FACTS):
+        with open(FILE_FACTS, mode='r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            try:
+                next(reader)
+                for row in reader:
+                    if row: processed.add(int(row[0]))
+            except StopIteration: pass
+    return processed
+
+def process_single_course(course, config):
     """
-    Worker function to process a single course.
-    Includes semantic filtering and exception handling.
+    Worker simplificado: Ya NO filtra por fecha ni nombre, 
+    asume que recibe un curso válido y solo ejecuta la extracción.
     """
-    course_id = course['id']
-    course_name = course['fullname']
-    course_name_upper = course_name.upper()
+    c_id = course['id']
     
-    # --- Semantic Filter ---
-    # Check if the course name contains any blacklisted keywords indicating it is not a real course.
-    for keyword in BLACKLIST_KEYWORDS:
-        if keyword in course_name_upper:
-            return {
-                'status': 'filtered_name', 
-                'data': None, 
-                'id': course_id, 
-                'name': course_name,
-                'reason': keyword
-            }
+    # Objeto base de respuesta
+    result = {
+        'id': c_id,
+        'course_info': course,
+        'status': 'unknown'
+    }
     
     try:
-        # Fetch analytics from services
-        stats = get_course_grade_stats(config, course_id)
+        # Llamada directa a la lógica de negocio
+        stats = get_full_course_analytics(config, c_id)
         
-        return {
-            'status': 'success' if stats else 'skipped_empty',
-            'data': stats,
-            'id': course_id,
-            'name': course_name
-        }
+        if stats:
+            result.update({'status': 'success', 'stats': stats})
+        else:
+            result.update({'status': 'skipped_empty', 'reason': 'No data/Low enrollment'})
+        return result
+            
     except Exception as e:
-        return {
-            'status': 'error', 
-            'error_msg': str(e), 
-            'id': course_id, 
-            'name': course_name
-        }
+        result.update({'status': 'error', 'error_msg': str(e)})
+        return result
 
 def main():
-    print("-" * 50)
-    print("   UNIMET Analytics ETL - Bulk Extraction Job")
-    print("-" * 50 + "\n")
-
+    print("--- UNIMET Analytics ETL: Pre-filtered Batch ---")
     executor = None
-    ignored_courses_report = [] 
     
     try:
         config = load_config()
-        init_csv(OUTPUT_FILE)
-        processed_ids = get_processed_ids(OUTPUT_FILE)
+        date_str = config['FILTERS']['start_date']
+        min_ts = datetime.strptime(date_str, "%Y-%m-%d").timestamp()
         
-        print("[INFO] Phase 1: Downloading Course Catalog...")
-        all_courses = get_target_courses(config)
+        init_csvs()
+        processed_ids = get_processed_ids()
         
-        if not all_courses:
-            print("[ERROR] Failed to retrieve course catalog.")
+        print("[INFO] Phase 1: Descargando Catálogo Completo...")
+        raw_courses = get_target_courses(config)
+        if not raw_courses: return
+        
+        total_raw = len(raw_courses)
+        print(f"       -> Catálogo bruto: {total_raw} cursos.")
+
+        # --- PRE-FILTRADO (Aquí está la magia) ---
+        print(f"[INFO] Aplicando filtros (Fecha > {date_str} y Palabras Clave)...")
+        
+        courses_to_run = []
+        skipped_old = 0
+        skipped_name = 0
+        
+        for c in raw_courses:
+            # 1. Filtro Nombre
+            if any(kw in c['fullname'].upper() for kw in BLACKLIST_KEYWORDS):
+                skipped_name += 1
+                continue
+            
+            # 2. Filtro Fecha
+            start_date = c.get('startdate', 0)
+            if start_date < min_ts:
+                skipped_old += 1
+                continue
+                
+            # 3. Filtro "Ya Procesado" (Resume Logic)
+            if c['id'] in processed_ids:
+                continue
+
+            # Si pasa todo, lo agregamos a la lista de ejecución
+            courses_to_run.append(c)
+
+        print(f"       -> Descartados por Antigüedad: {skipped_old}")
+        print(f"       -> Descartados por Nombre/Test: {skipped_name}")
+        print(f"       -> Ya procesados anteriormente: {len(processed_ids)}")
+        print(f"[INFO] Phase 2: Iniciando procesamiento de {len(courses_to_run)} cursos válidos...")
+        
+        if not courses_to_run:
+            print("[WARN] No hay cursos nuevos que cumplan los criterios.")
             return
 
-        # Filter out already processed courses
-        pending_courses = [c for c in all_courses if c['id'] not in processed_ids]
-        total_pending = len(pending_courses)
-        print(f"[INFO] Total pending courses to process: {total_pending}")
-
-        print("\n[INFO] Phase 2: Mass Extraction and Processing...")
-        
+        # --- EJECUCIÓN ---
         executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        
+        # Ahora el futuro solo recibe cursos válidos
         future_to_course = {
-            executor.submit(process_single_course, c, config, total_pending, i): c 
-            for i, c in enumerate(pending_courses)
+            executor.submit(process_single_course, c, config): c 
+            for c in courses_to_run
         }
 
-        completed_count = 0
+        completed = 0
+        total_valid = len(courses_to_run)
         
-        with open(OUTPUT_FILE, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
+        with open(FILE_FACTS, mode='a', newline='', encoding='utf-8') as f_facts, \
+             open(FILE_DIM_SUBJECT, mode='a', newline='', encoding='utf-8') as f_dim:
             
-            try:
-                for future in as_completed(future_to_course):
-                    completed_count += 1
-                    res = future.result()
+            writer_facts = csv.writer(f_facts)
+            writer_dim = csv.writer(f_dim)
+            
+            for future in as_completed(future_to_course):
+                completed += 1
+                res = future.result()
+                
+                pct = (completed / total_valid) * 100
+                log_prefix = f"[{completed}/{total_valid}] {pct:.1f}%"
+                
+                if res['status'] == 'success':
+                    stats = res['stats']
+                    info = res['course_info']
                     
-                    progress = (completed_count / total_pending) * 100
+                    proc_val = stats['ind_3_1_procrastinacion']
+                    if proc_val is None: proc_val = ""
                     
-                    # Status logging
-                    log_prefix = f"[{completed_count}/{total_pending}] {progress:.1f}%"
+                    # Escritura Hechos
+                    row_fact = [
+                        stats['id_curso'], info.get('shortname', 'SIN_CODIGO'), "TBD",
+                        stats['n_estudiantes'], stats['ind_1_1_cumplimiento'],
+                        stats['ind_1_2_aprobacion'], stats['ind_1_3_promedio'],
+                        stats['ind_1_3_mediana'], stats['ind_1_3_desviacion'],
+                        stats['ind_1_4_activos'], stats['ind_1_5_finalizacion'],
+                        stats['ind_2_1_metodologia'], stats['ind_2_2_relacion_eval'],
+                        stats['ind_2_3_retencion'], proc_val, stats['ind_3_2_feedback'],
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ]
                     
-                    if res['status'] == 'success':
-                        status_msg = "[OK]"
-                        detail_msg = ""
-                    elif res['status'] == 'filtered_name':
-                        status_msg = "[FILTERED]"
-                        detail_msg = f"(Keyword: {res['reason']})"
-                        ignored_courses_report.append(f"ID {res['id']}: {res['name']}")
-                    elif res['status'] == 'skipped_empty':
-                        status_msg = "[SKIPPED]"
-                        detail_msg = "(Insufficient data or low enrollment)"
-                    else:
-                        status_msg = "[ERROR]"
-                        detail_msg = f"({res.get('error_msg', 'Unknown error')})"
+                    # Escritura Dimensión
+                    row_dim = [
+                        info.get('shortname', 'SIN_CODIGO'),
+                        info.get('fullname', 'Desconocido'),
+                        info.get('categoryid', 0)
+                    ]
+                    
+                    with csv_lock:
+                        writer_facts.writerow(row_fact)
+                        writer_dim.writerow(row_dim)
+                        f_facts.flush()
+                        f_dim.flush()
 
-                    # Print formatted log line
-                    print(f"\r{log_prefix} {status_msg} ID {res['id']} {detail_msg}".ljust(80), end="")
-                    
-                    # Persist data if successful
-                    if res['status'] == 'success':
-                        stats = res['data']
-                        with csv_lock:
-                            writer.writerow([
-                                res['id'], 
-                                res['name'], 
-                                "TBD", # Professor ID Placeholder
-                                stats['total_procesados'],
-                                stats['ind_1_3_nota_promedio'],
-                                stats['ind_1_3_nota_mediana'],
-                                stats['ind_1_3_nota_desviacion'],
-                                stats['ind_1_2_aprobacion'],
-                                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            ])
-                            f.flush()
-
-            except KeyboardInterrupt:
-                print("\n\n[WARN] User interruption detected. Stopping executor...")
-                executor.shutdown(wait=False, cancel_futures=True)
-                raise
+                    print(f"\r{log_prefix} [OK] ID {res['id']}".ljust(80), end="")
+                
+                elif res['status'] == 'error':
+                    print(f"\r{log_prefix} [ERROR] ID {res['id']} {res.get('error_msg')}".ljust(80))
+                
+                else:
+                    # Skipped empty (Pocos alumnos o sin notas)
+                    print(f"\r{log_prefix} [SKIPPED] ID {res['id']} ({res.get('reason')})".ljust(80), end="")
 
     except KeyboardInterrupt:
-        print("\n[INFO] Process stopped by user.")
+        print("\n\n[WARN] Interrupción detectada. Deteniendo...")
+        if executor: executor.shutdown(wait=False, cancel_futures=True)
+        
     except Exception as e:
         print(f"\n[CRITICAL ERROR] {e}")
-    finally:
-        if executor: 
-            executor.shutdown(wait=False)
+        import traceback; traceback.print_exc()
         
-        # --- Final Report ---
-        print("\n\n" + "="*50)
-        print("SEMANTIC FILTER REPORT (EXCLUDED COURSES)")
-        print("="*50)
-        if ignored_courses_report:
-            for line in ignored_courses_report:
-                print(f" - {line}")
-            print(f"\nTotal excluded: {len(ignored_courses_report)}")
-        else:
-            print("[INFO] No courses were excluded by keyword filters.")
-        print("="*50)
-        print("[INFO] Job finished.")
+    finally:
+        if executor: executor.shutdown(wait=False)
+        print("\nJob Finished.")
 
 if __name__ == "__main__":
     main()
