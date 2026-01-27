@@ -22,3 +22,7 @@ dist/
 build/
 *.spec
 *.exe
+
+# --- Debug ---
+debug_*.py
+src/debug_*.py

@@ -2,213 +2,263 @@ import sys
 import os
 import csv
 import threading
-import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Set, Dict, Any, Optional
 
+# Ensure local modules can be imported
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path: sys.path.insert(0, current_dir)
+if current_dir not in sys.path: 
+    sys.path.insert(0, current_dir)
 
 from utils.config_loader import load_config
-from api.services import get_full_course_analytics 
+from api.services import process_course_analytics
 from api.client import get_target_courses 
 
-FILE_FACTS = "hechos_curso.csv"
-FILE_DIM_SUBJECT = "dim_asignaturas.csv"
-MAX_WORKERS = 2
-BLACKLIST_KEYWORDS = ["PRUEBA", "PLANTILLA", "COPIA", "SANDPIT", "TEST"]
+# --- OUTPUT CONFIGURATION ---
+FACTS_FILENAME = "hechos_curso_grupo1.csv"
+DIM_PROF_FILENAME = "dim_profesores.csv"
+DIM_SUBJ_FILENAME = "dim_asignaturas.csv"
 
+# Performance Tuning
+MAX_WORKERS = 5
+
+# Filtering Rules
+# Courses containing these substrings in their name will be ignored.
+BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT"]
+
+# Thread synchronization primitive for CSV writing
 csv_lock = threading.Lock()
 
-def init_csvs():
-    if not os.path.exists(FILE_FACTS):
-        with open(FILE_FACTS, mode='w', newline='', encoding='utf-8') as f:
+def initialize_storage() -> None:
+    """
+    Initializes CSV storage files with their respective headers if they do not exist.
+    """
+    # 1. Fact Table (Course Indicators)
+    if not os.path.exists(FACTS_FILENAME):
+        with open(FACTS_FILENAME, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow([
-                "id_curso", "id_asignatura", "id_profesor", "n_estudiantes",
-                "tasa_cumplimiento", "tasa_aprobacion", "nota_promedio", 
-                "nota_mediana", "nota_desviacion", "pct_activos", "tasa_finalizacion",
-                "pct_metodologia_activa", "relacion_eval_noeval", "tasa_retencion",
-                "indice_procrastinacion", "nivel_feedback", 
+                "id_curso", 
+                "id_asignatura", 
+                "nombre_curso", 
+                "id_profesor", 
+                "categoria_id",      
+                "n_estudiantes", 
+                "tasa_cumplimiento", 
+                "tasa_aprobacion",
+                "nota_promedio", 
+                "nota_mediana", 
+                "nota_desviacion",
+                "pct_activos", 
+                "tasa_finalizacion", 
                 "fecha_extraccion"
             ])
-    if not os.path.exists(FILE_DIM_SUBJECT):
-        with open(FILE_DIM_SUBJECT, mode='w', newline='', encoding='utf-8') as f:
+
+    # 2. Dimension: Professors
+    if not os.path.exists(DIM_PROF_FILENAME):
+        with open(DIM_PROF_FILENAME, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["id_profesor", "nombre_profesor"])
+
+    # 3. Dimension: Subjects
+    if not os.path.exists(DIM_SUBJ_FILENAME):
+        with open(DIM_SUBJ_FILENAME, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(["id_asignatura", "nombre_materia", "categoria_id"])
 
-def get_processed_ids():
-    """ Devuelve un set con los IDs de cursos ya procesados en el CSV """
-    processed = set()
-    if os.path.exists(FILE_FACTS):
-        with open(FILE_FACTS, mode='r', encoding='utf-8') as f:
+def load_processed_course_ids() -> Set[int]:
+    """
+    Reads the fact table to retrieve IDs of courses that have already been processed.
+    This enables the script to resume operation after an interruption.
+    
+    Returns:
+        A set of integers representing processed course IDs.
+    """
+    processed_ids = set()
+    if os.path.exists(FACTS_FILENAME):
+        with open(FACTS_FILENAME, mode='r', encoding='utf-8') as f:
             reader = csv.reader(f)
             try:
-                next(reader)
+                next(reader)  # Skip header
                 for row in reader:
-                    if row: processed.add(int(row[0]))
-            except StopIteration: pass
-    return processed
+                    if row: 
+                        processed_ids.add(int(row[0]))
+            except StopIteration:
+                pass
+    return processed_ids
 
-def process_single_course(course, config):
+def execute_course_task(course: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Worker simplificado: Ya NO filtra por fecha ni nombre, 
-    asume que recibe un curso válido y solo ejecuta la extracción.
-    """
-    c_id = course['id']
+    Worker function to process a single course. 
+    Intended to be run inside a ThreadPoolExecutor.
     
-    # Objeto base de respuesta
-    result = {
-        'id': c_id,
-        'course_info': course,
-        'status': 'unknown'
-    }
-    
-    try:
-        # Llamada directa a la lógica de negocio
-        stats = get_full_course_analytics(config, c_id)
+    Args:
+        course: Dictionary containing raw course metadata.
+        config: Application configuration.
         
-        if stats:
-            result.update({'status': 'success', 'stats': stats})
+    Returns:
+        A dictionary containing the execution status ('success', 'skipped', 'error')
+        and the resulting data or error message.
+    """
+    try:
+        # Delegate logic to the service layer (3-Layer Architecture)
+        analytics_result = process_course_analytics(config, course)
+        
+        if analytics_result:
+            # --- GLOBAL QUALITY FILTER ---
+            # Discard courses where the average grade is essentially zero,
+            # indicating that grading has not occurred.
+            avg_grade = analytics_result.get('ind_1_3_promedio', 0.0)
+            if avg_grade <= 0.1:
+                 return {
+                     'status': 'skipped', 
+                     'id': course['id'], 
+                     'reason': 'Zero average grade (Ungraded)'
+                 }
+            
+            return {'status': 'success', 'data': analytics_result}
         else:
-            result.update({'status': 'skipped_empty', 'reason': 'No data/Low enrollment'})
-        return result
+            # Service returns None if the course fails validation (e.g., too few students)
+            return {
+                'status': 'skipped', 
+                'id': course['id'], 
+                'reason': 'Insufficient data/students'
+            }
             
     except Exception as e:
-        result.update({'status': 'error', 'error_msg': str(e)})
-        return result
+        return {'status': 'error', 'id': course['id'], 'error': str(e)}
 
-def main():
-    print("--- UNIMET Analytics ETL: Pre-filtered Batch ---")
+def main() -> None:
+    print("--- UNIMET Analytics: Extraction Pipeline (Production) ---")
     executor = None
     
     try:
         config = load_config()
+        
+        # Parse filter date
         date_str = config['FILTERS']['start_date']
-        min_ts = datetime.strptime(date_str, "%Y-%m-%d").timestamp()
+        min_timestamp = datetime.strptime(date_str, "%Y-%m-%d").timestamp()
         
-        init_csvs()
-        processed_ids = get_processed_ids()
+        # Initialize storage and state
+        initialize_storage()
+        processed_ids = load_processed_course_ids()
         
-        print("[INFO] Phase 1: Descargando Catálogo Completo...")
+        print("[INFO] Fetching course catalog...")
         raw_courses = get_target_courses(config)
-        if not raw_courses: return
-        
-        total_raw = len(raw_courses)
-        print(f"       -> Catálogo bruto: {total_raw} cursos.")
-
-        # --- PRE-FILTRADO (Aquí está la magia) ---
-        print(f"[INFO] Aplicando filtros (Fecha > {date_str} y Palabras Clave)...")
-        
-        courses_to_run = []
-        skipped_old = 0
-        skipped_name = 0
-        
-        for c in raw_courses:
-            # 1. Filtro Nombre
-            if any(kw in c['fullname'].upper() for kw in BLACKLIST_KEYWORDS):
-                skipped_name += 1
-                continue
-            
-            # 2. Filtro Fecha
-            start_date = c.get('startdate', 0)
-            if start_date < min_ts:
-                skipped_old += 1
-                continue
-                
-            # 3. Filtro "Ya Procesado" (Resume Logic)
-            if c['id'] in processed_ids:
-                continue
-
-            # Si pasa todo, lo agregamos a la lista de ejecución
-            courses_to_run.append(c)
-
-        print(f"       -> Descartados por Antigüedad: {skipped_old}")
-        print(f"       -> Descartados por Nombre/Test: {skipped_name}")
-        print(f"       -> Ya procesados anteriormente: {len(processed_ids)}")
-        print(f"[INFO] Phase 2: Iniciando procesamiento de {len(courses_to_run)} cursos válidos...")
-        
-        if not courses_to_run:
-            print("[WARN] No hay cursos nuevos que cumplan los criterios.")
+        if not raw_courses: 
+            print("[ERROR] No courses found in the source.")
             return
 
-        # --- EJECUCIÓN ---
+        # Pre-execution Filtering (Blacklist & Date)
+        courses_queue = []
+        for course in raw_courses:
+            # Resume capability: skip already processed IDs
+            if course['id'] in processed_ids: 
+                continue
+            
+            # Name filter: skip test/sandbox courses
+            course_name_upper = course['fullname'].upper()
+            if any(keyword in course_name_upper for keyword in BLACKLIST_KEYWORDS): 
+                continue
+            
+            # Date filter: skip old courses
+            if course.get('startdate', 0) < min_timestamp: 
+                continue
+            
+            courses_queue.append(course)
+
+        print(f"[INFO] Queued {len(courses_queue)} new courses for processing...")
+
+        if not courses_queue: 
+            print("[INFO] No new courses to process. System is up to date.")
+            return
+
+        # Parallel Execution
+        # We use ThreadPoolExecutor for I/O bound tasks (API calls)
         executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-        
-        # Ahora el futuro solo recibe cursos válidos
         future_to_course = {
-            executor.submit(process_single_course, c, config): c 
-            for c in courses_to_run
+            executor.submit(execute_course_task, c, config): c 
+            for c in courses_queue
         }
 
-        completed = 0
-        total_valid = len(courses_to_run)
+        completed_count = 0
+        total_count = len(courses_queue)
         
-        with open(FILE_FACTS, mode='a', newline='', encoding='utf-8') as f_facts, \
-             open(FILE_DIM_SUBJECT, mode='a', newline='', encoding='utf-8') as f_dim:
+        # Open CSV files once and keep handles open for performance
+        with open(FACTS_FILENAME, 'a', newline='', encoding='utf-8') as f_facts, \
+             open(DIM_PROF_FILENAME, 'a', newline='', encoding='utf-8') as f_prof, \
+             open(DIM_SUBJ_FILENAME, 'a', newline='', encoding='utf-8') as f_subj:
             
             writer_facts = csv.writer(f_facts)
-            writer_dim = csv.writer(f_dim)
+            writer_prof = csv.writer(f_prof)
+            writer_subj = csv.writer(f_subj)
             
             for future in as_completed(future_to_course):
-                completed += 1
-                res = future.result()
+                completed_count += 1
+                result = future.result()
                 
-                pct = (completed / total_valid) * 100
-                log_prefix = f"[{completed}/{total_valid}] {pct:.1f}%"
+                # Progress calculation
+                progress_pct = (completed_count / total_count) * 100
+                log_prefix = f"[{completed_count}/{total_count}] {progress_pct:.1f}%"
                 
-                if res['status'] == 'success':
-                    stats = res['stats']
-                    info = res['course_info']
+                if result['status'] == 'success':
+                    data = result['data']
                     
-                    proc_val = stats['ind_3_1_procrastinacion']
-                    if proc_val is None: proc_val = ""
-                    
-                    # Escritura Hechos
+                    # Prepare rows
                     row_fact = [
-                        stats['id_curso'], info.get('shortname', 'SIN_CODIGO'), "TBD",
-                        stats['n_estudiantes'], stats['ind_1_1_cumplimiento'],
-                        stats['ind_1_2_aprobacion'], stats['ind_1_3_promedio'],
-                        stats['ind_1_3_mediana'], stats['ind_1_3_desviacion'],
-                        stats['ind_1_4_activos'], stats['ind_1_5_finalizacion'],
-                        stats['ind_2_1_metodologia'], stats['ind_2_2_relacion_eval'],
-                        stats['ind_2_3_retencion'], proc_val, stats['ind_3_2_feedback'],
+                        data['id_curso'], 
+                        data['id_asignatura'], 
+                        data['nombre_curso'], 
+                        data['id_profesor'], 
+                        data['categoria_id'],  
+                        data['n_estudiantes_procesados'], 
+                        data['ind_1_1_cumplimiento'], 
+                        data['ind_1_2_aprobacion'],
+                        data['ind_1_3_promedio'], 
+                        data['ind_1_3_mediana'], 
+                        data['ind_1_3_desviacion'],
+                        data['ind_1_4_activos'], 
+                        data['ind_1_5_finalizacion'],
                         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ]
                     
-                    # Escritura Dimensión
-                    row_dim = [
-                        info.get('shortname', 'SIN_CODIGO'),
-                        info.get('fullname', 'Desconocido'),
-                        info.get('categoryid', 0)
-                    ]
+                    row_prof = [data['id_profesor'], data['nombre_profesor']]
+                    row_subj = [data['id_asignatura'], data['nombre_curso'], data['categoria_id']]
                     
+                    # Thread-safe writing
                     with csv_lock:
                         writer_facts.writerow(row_fact)
-                        writer_dim.writerow(row_dim)
+                        writer_prof.writerow(row_prof)
+                        writer_subj.writerow(row_subj)
+                        
+                        # Flush to ensure data persists immediately
                         f_facts.flush()
-                        f_dim.flush()
-
-                    print(f"\r{log_prefix} [OK] ID {res['id']}".ljust(80), end="")
+                        f_prof.flush()
+                        f_subj.flush()
+                    
+                    # Console Logging
+                    short_name = (data['nombre_curso'][:30] + '..') if len(data['nombre_curso']) > 30 else data['nombre_curso']
+                    print(f"\r{log_prefix} [OK] ID {data['id_curso']} | {short_name}".ljust(90), end="")
                 
-                elif res['status'] == 'error':
-                    print(f"\r{log_prefix} [ERROR] ID {res['id']} {res.get('error_msg')}".ljust(80))
+                elif result['status'] == 'skipped':
+                     print(f"\r{log_prefix} [SKIP] ID {result['id']} ({result['reason']})".ljust(90), end="")
                 
                 else:
-                    # Skipped empty (Pocos alumnos o sin notas)
-                    print(f"\r{log_prefix} [SKIPPED] ID {res['id']} ({res.get('reason')})".ljust(80), end="")
+                    print(f"\r{log_prefix} [ERROR] ID {result['id']}: {result['error']}".ljust(90))
 
     except KeyboardInterrupt:
-        print("\n\n[WARN] Interrupción detectada. Deteniendo...")
-        if executor: executor.shutdown(wait=False, cancel_futures=True)
+        if executor: 
+            executor.shutdown(wait=False, cancel_futures=True)
+        print("\n[STOP] Process interrupted by user.")
         
     except Exception as e:
         print(f"\n[CRITICAL ERROR] {e}")
-        import traceback; traceback.print_exc()
         
     finally:
-        if executor: executor.shutdown(wait=False)
-        print("\nJob Finished.")
+        if executor: 
+            executor.shutdown(wait=False)
+        print("\n[FINISH] Execution completed.")
 
 if __name__ == "__main__":
     main()
