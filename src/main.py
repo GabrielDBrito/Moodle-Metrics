@@ -33,7 +33,8 @@ def initialize_storage() -> None:
     """
     Initializes CSV files with their respective SPANISH headers if they do not exist.
     """
-    # 1. Facts Table (Indicators) - HEADERS IN SPANISH FOR BI TOOLS
+
+    # 1. Facts Table
     if not os.path.exists(FACTS_FILENAME):
         with open(FACTS_FILENAME, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
@@ -44,27 +45,36 @@ def initialize_storage() -> None:
                 "id_profesor", 
                 "categoria_id",      
                 "n_estudiantes_procesados", 
+
+                # Grupo 1
                 "ind_1_1_cumplimiento", 
                 "ind_1_2_aprobacion",
                 "ind_1_3_promedio", 
                 "ind_1_3_mediana", 
                 "ind_1_3_desviacion",
                 "ind_1_4_activos", 
-                "ind_1_5_finalizacion", 
+                "ind_1_5_finalizacion",
+
+                # Grupo 2
+                "ind_2_1_metodologia_activa_pct",
+                "ind_2_2_balance_eval_pct",
+
                 "fecha_extraccion"
             ])
 
-    # 2. Professors Dimension - HEADERS IN SPANISH
+
+    # 2. Professors Dimension
     if not os.path.exists(DIM_PROF_FILENAME):
         with open(DIM_PROF_FILENAME, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(["id_profesor", "nombre_profesor"])
 
-    # 3. Subjects Dimension - HEADERS IN SPANISH
+    # 3. Subjects Dimension
     if not os.path.exists(DIM_SUBJ_FILENAME):
         with open(DIM_SUBJ_FILENAME, mode='w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(["id_asignatura", "nombre_materia", "categoria_id"])
+
 
 def load_processed_course_ids() -> Set[int]:
     """
@@ -179,6 +189,7 @@ def main() -> None:
             courses_queue.append(course)
 
         print(f"[INFO] Se procesarán {len(courses_queue)} cursos nuevos...")
+        courses_queue = courses_queue[:20]
 
         if not courses_queue: 
             print("[INFO] Todo al día.")
@@ -218,21 +229,28 @@ def main() -> None:
                     # Assuming keys in 'data' dictionary from services.py are still: 
                     # 'id_curso', 'ind_1_3_promedio', etc.
                     row_fact = [
-                        data['id_curso'], 
-                        data['id_asignatura'], 
-                        data['nombre_curso'], 
-                        data['id_profesor'], 
-                        data['categoria_id'],  
-                        data['n_estudiantes_procesados'], 
-                        data['ind_1_1_cumplimiento'], 
-                        data['ind_1_2_aprobacion'], 
-                        data['ind_1_3_promedio'], 
-                        data['ind_1_3_mediana'], 
-                        data['ind_1_3_desviacion'], 
-                        data['ind_1_4_activos'], 
-                        data['ind_1_5_finalizacion'], 
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    ]
+                            data['id_curso'],
+                            data['id_asignatura'],
+                            data['nombre_curso'],
+                            data['id_profesor'],
+                            data['categoria_id'],
+                            data['n_estudiantes_procesados'],
+                            data['ind_1_1_cumplimiento'],
+                            data['ind_1_2_aprobacion'],
+                            data['ind_1_3_promedio'],
+                            data['ind_1_3_mediana'],
+                            data['ind_1_3_desviacion'],
+                            data['ind_1_4_activos'],
+                            data['ind_1_5_finalizacion'],
+
+                            # --- GRUPO 2 ---
+                           
+                            data['ind_2_1_metodologia_activa_pct'],
+                            data['ind_2_2_balance_eval_pct'],
+
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        ]
+
                     
                     # Thread-safe writing
                     with csv_lock:

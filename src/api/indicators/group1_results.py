@@ -277,3 +277,88 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
         "ind_1_4_activos": round(activity_rate, 2), 
         "ind_1_5_finalizacion": completion
     }
+
+def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
+    """
+    Extrae los tipos de módulos evaluables válidos (assign, quiz, forum, etc.)
+    usando EXACTAMENTE el mismo filtrado lógico que group1.
+
+    Retorna:
+        Set[str]: nombres de módulos evaluables reales del curso
+    """
+    if not grades_data or not isinstance(grades_data, dict):
+        return set()
+
+    user_grades = grades_data.get('usergrades')
+    if not user_grades or not isinstance(user_grades, list):
+        return set()
+
+    max_columns = 0
+    for student in user_grades:
+        if student.get('gradeitems'):
+            max_columns = max(max_columns, len(student['gradeitems']))
+
+    if max_columns == 0:
+        return set()
+
+    participation_counts = [0] * max_columns
+    items_metadata = [None] * max_columns
+    total_valid_students = 0
+
+    for student in user_grades:
+        if not student or not student.get('gradeitems'):
+            continue
+        total_valid_students += 1
+
+        for idx, item in enumerate(student['gradeitems']):
+            try:
+                if items_metadata[idx] is None:
+                    items_metadata[idx] = {
+                        'type': item.get('itemtype'),
+                        'module': item.get('itemmodule'),
+                        'gmax': float(item.get('grademax', 0)),
+                        'wraw': float(item.get('weightraw')) if item.get('weightraw') is not None else None,
+                        'wfmt': item.get('weightformatted', '')
+                    }
+                if item.get('graderaw') is not None:
+                    participation_counts[idx] += 1
+            except (ValueError, TypeError, IndexError):
+                continue
+
+    # Detect explicit weights
+    has_explicit_weights = False
+    for meta in items_metadata:
+        if not meta or meta['type'] in ('course', 'category'):
+            continue
+        if (meta['wraw'] is not None and meta['wraw'] > 0.0001) or (
+            meta['wfmt'] and '0.00' not in meta['wfmt']
+        ):
+            has_explicit_weights = True
+            break
+
+    valid_modules = set()
+
+    for idx, meta in enumerate(items_metadata):
+        if not meta or meta['type'] in ('course', 'category'):
+            continue
+        if meta['gmax'] <= 0.01:
+            continue
+
+        participation_pct = participation_counts[idx] / total_valid_students if total_valid_students else 0
+
+        if has_explicit_weights:
+            invalid_weight = (
+                meta['wraw'] is None or
+                meta['wraw'] <= 0.0001 or
+                '0.00' in meta['wfmt']
+            )
+            if invalid_weight:
+                continue
+        else:
+            if participation_pct < MIN_PARTICIPATION_RATE:
+                continue
+
+        if meta.get('module'):
+            valid_modules.add(meta['module'])
+
+    return valid_modules
