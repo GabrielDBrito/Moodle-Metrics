@@ -16,7 +16,7 @@ from api.services import process_course_analytics
 from api.client import get_target_courses 
 
 # --- OUTPUT CONFIGURATION (SPANISH FILES) ---
-FACTS_FILENAME = "hechos_curso_grupo1.csv"
+FACTS_FILENAME = "indicadores.csv"
 DIM_PROF_FILENAME = "dim_profesores.csv"
 DIM_SUBJ_FILENAME = "dim_asignaturas.csv"
 
@@ -58,6 +58,10 @@ def initialize_storage() -> None:
                 # Grupo 2
                 "ind_2_1_metodologia_activa_pct",
                 "ind_2_2_balance_eval_pct",
+
+                # Grupo 3 (comportamiento)
+                "ind_3_1_procrastinacion_pct",
+                "ind_3_2_feedback_ratio",
 
                 "fecha_extraccion"
             ])
@@ -235,6 +239,8 @@ def main() -> None:
                             data['id_profesor'],
                             data['categoria_id'],
                             data['n_estudiantes_procesados'],
+
+                            # --- GRUPO 1 ---
                             data['ind_1_1_cumplimiento'],
                             data['ind_1_2_aprobacion'],
                             data['ind_1_3_promedio'],
@@ -244,9 +250,12 @@ def main() -> None:
                             data['ind_1_5_finalizacion'],
 
                             # --- GRUPO 2 ---
-                           
                             data['ind_2_1_metodologia_activa_pct'],
                             data['ind_2_2_balance_eval_pct'],
+
+                            # --- GRUPO 3 ---
+                            data.get("ind_3_1_procrastinacion_pct"),
+                            data.get("ind_3_2_feedback_ratio"),
 
                             datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         ]

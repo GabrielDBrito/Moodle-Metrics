@@ -64,9 +64,7 @@ def calculate_design_metrics(
     balance_eval = evaluated_active / (evaluated_active + non_evaluated_active) if (evaluated_active + non_evaluated_active) > 0 else 0
     balance_eval_pct = balance_eval * 100
     if balance_eval_pct == 0:
-        print(f"Curso {course_id} - {course_contents[0].get('name', 'sin nombre')} tiene balance_eval_pct 0")
-        print(f"evaluated_active={evaluated_active}, non_evaluated_active={non_evaluated_active}, total_modules={total_modules}, total_active={total_active}")
-
+        balance_eval_pct = 100
     return {
         #"ind_2_1_metodologia_activa_ratio": round(metodologia_activa_ratio, 4),
         "ind_2_1_metodologia_activa_pct": round(metodologia_activa_pct, 2),
