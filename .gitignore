@@ -26,3 +26,6 @@ build/
 # --- Debug ---
 debug_*.py
 src/debug_*.py
+
+#---DB Info---
+db.env

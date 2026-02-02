@@ -271,9 +271,9 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
         "n_estudiantes_procesados": processed_count,
         "ind_1_1_cumplimiento": compliance,
         "ind_1_2_aprobacion": round(approval_rate, 2),
-        "ind_1_3_promedio": round(avg_val, 2),
-        "ind_1_3_mediana": round(med_val, 2),
-        "ind_1_3_desviacion": round(dev_val, 2),
+        "ind_1_3_nota_promedio": round(avg_val, 2),
+        "ind_1_3_nota_mediana": round(med_val, 2),
+        "ind_1_3_nota_desviacion": round(dev_val, 2),
         "ind_1_4_activos": round(activity_rate, 2), 
         "ind_1_5_finalizacion": completion
     }
@@ -281,7 +281,6 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
 def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
     """
     Extrae los tipos de módulos evaluables válidos (assign, quiz, forum, etc.)
-    usando EXACTAMENTE el mismo filtrado lógico que group1.
 
     Retorna:
         Set[str]: nombres de módulos evaluables reales del curso

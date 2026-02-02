@@ -47,9 +47,8 @@ def calculate_design_metrics(
         # evitar división por cero
         return {
             "ind_2_1_metodologia_activa_ratio": 0.0,
-            "ind_2_1_metodologia_activa_pct": 0.0,
-            "ind_2_2_eval_noeval_ratio": 0.0,
-            "ind_2_2_balance_eval_pct": 0.0
+            "ind_2_1_metod_activa": 0.0,
+            "ind_2_2_ratio_eval": 0.0
         }
 
     metodologia_activa_ratio = total_active / total_modules
@@ -67,7 +66,7 @@ def calculate_design_metrics(
         balance_eval_pct = 100
     return {
         #"ind_2_1_metodologia_activa_ratio": round(metodologia_activa_ratio, 4),
-        "ind_2_1_metodologia_activa_pct": round(metodologia_activa_pct, 2),
+        "ind_2_1_metod_activa": round(metodologia_activa_pct, 2),
         #"ind_2_2_eval_noeval_ratio": round(eval_noeval_ratio, 4),
-        "ind_2_2_balance_eval_pct": round(balance_eval_pct, 2)
+        "ind_2_2_ratio_eval": round(balance_eval_pct, 2)
     }

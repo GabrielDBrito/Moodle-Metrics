@@ -87,11 +87,11 @@ def calculate_group3_metrics_from_grades(grades_data: Dict[str, Any]) -> Optiona
                 continue
 
     # 3.1: % de ítems con calificación (proxy para procrastinación)
-    ind_3_1_procrastinacion_pct = round((total_graded_items / (total_valid_items * total_valid_students)) * 100, 2) if total_valid_items > 0 and total_valid_students > 0 else None
+    ind_3_1_procrastinacion = round((total_graded_items / (total_valid_items * total_valid_students)) * 100, 2) if total_valid_items > 0 and total_valid_students > 0 else None
     # 3.2: % de calificaciones con feedback
-    ind_3_2_feedback_ratio = round((total_feedbacks / total_graded_items) * 100, 2) if total_graded_items > 0 else None
+    ind_3_2_feedback = round((total_feedbacks / total_graded_items) * 100, 2) if total_graded_items > 0 else None
 
     return {
-        'ind_3_1_procrastinacion_pct': ind_3_1_procrastinacion_pct,
-        'ind_3_2_feedback_ratio': ind_3_2_feedback_ratio
+        'ind_3_1_procrastinacion': ind_3_1_procrastinacion,
+        'ind_3_2_feedback': ind_3_2_feedback
     }
