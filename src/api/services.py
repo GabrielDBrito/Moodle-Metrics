@@ -8,52 +8,6 @@ from .indicators.group3_behavior import calculate_group3_metrics_from_grades
 
 
 
-TARGET_DEPARTMENTS = {"postg", "dida", "ae", "u_v"}
-
-# =========================
-# CATEGORÍAS → DEPARTAMENTO
-# =========================
-
-_CATEGORY_DEPARTMENT_MAP = None
-
-
-def load_category_department_map(config) -> Dict[int, str]:
-    global _CATEGORY_DEPARTMENT_MAP
-
-    if _CATEGORY_DEPARTMENT_MAP is not None:
-        return _CATEGORY_DEPARTMENT_MAP
-
-    categories = call_moodle_api(
-        config['MOODLE'],
-        "core_course_get_categories",
-        criteria=[]
-    )
-
-    category_map = {}
-
-    for cat in categories:
-        cat_id = cat.get("id")
-        name = cat.get("name", "").lower()
-
-        if not cat_id:
-            continue
-
-        if "postg" in name or "postgrado" in name:
-            category_map[cat_id] = "postg"
-        elif "dida" in name:
-            category_map[cat_id] = "DIDA"
-        elif "ae" in name:
-            category_map[cat_id] = "ae"
-        elif "u_v" in name or "u-v" in name or "unidad virtual" in name:
-            category_map[cat_id] = "u_v"
-
-    _CATEGORY_DEPARTMENT_MAP = category_map
-    return category_map
-
-
-def resolve_course_department(category_id: int, config) -> Optional[str]:
-    category_map = load_category_department_map(config)
-    return category_map.get(category_id)
 
  
 def _sanitize_subject_code(shortname: Optional[str]) -> str:
@@ -106,6 +60,8 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
     g3 = calculate_group3_metrics_from_grades(grades) or {}
 
     prof_id, prof_name = _identify_instructor(course_id, config)
+    
+
 
     return {
         "id_curso": course_id,
@@ -113,6 +69,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "nombre_curso": course.get("fullname"),
         "id_profesor": prof_id,
         "nombre_profesor": prof_name,
+        
         "categoria_id": course.get("categoryid"),
 
         "startdate": course.get("startdate"),
