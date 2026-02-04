@@ -57,6 +57,20 @@ def build_category_map(categories):
         result[c["id"]] = resolve(c)
 
     return result
+def extract_departamento(category_path: str) -> str | None:
+    """
+    Extrae SOLO el segundo nivel de la ruta:
+    Facultad / Departamento / ...
+    """
+    if not category_path:
+        return None
+
+    parts = [p.strip() for p in category_path.split("/") if p.strip()]
+
+    if len(parts) < 2:
+        return "Otros"
+
+    return parts[1]
 
 # --------------------------------------------------
 # CSV INIT
@@ -147,6 +161,13 @@ def main():
     processed_ids = load_processed_course_ids()
     existing_professors = load_existing_professor_ids()
 
+    # Configuración filtro de fechas
+    start_str = config['FILTERS']['start_date']
+    min_ts = datetime.strptime(start_str, "%Y-%m-%d").timestamp()
+
+    end_str = config['FILTERS']['end_date']
+    max_ts = datetime.strptime(end_str, "%Y-%m-%d").timestamp() + 86399  # Para incluir todo el día final
+
     print("[INFO] Descargando categorías...")
     categories = call_moodle_api(config["MOODLE"], "core_course_get_categories")
     category_map = build_category_map(categories)
@@ -167,10 +188,17 @@ def main():
         if any(dep in cat_path for dep in INVALID_DEPARTMENTS):
             continue
 
+        c_start = c.get("startdate", 0)
+        if c_start < min_ts:
+            continue
+        if c_start > max_ts:
+            continue
+
         courses_queue.append(c)
 
     print(f"[INFO] Se procesarán {len(courses_queue)} cursos")
 
+  
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor, \
          open(FACTS_FILENAME, "a", newline="", encoding="utf-8") as f_facts, \
          open(DIM_PROF_FILENAME, "a", newline="", encoding="utf-8") as f_prof, \
@@ -190,7 +218,9 @@ def main():
                 d = result["data"]
 
                 categoria_id = d["categoria_id"]
-                departamento = category_map.get(categoria_id, "OTRO")
+                ruta_categoria = category_map.get(categoria_id, "")
+                departamento = extract_departamento(ruta_categoria) or "OTRO"
+
 
                 with csv_lock:
                     writer_facts.writerow([
