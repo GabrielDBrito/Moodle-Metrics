@@ -1,0 +1,33 @@
+name: Mantener Supabase Activo
+
+on:
+  schedule:
+    # Ejecutar cada 3 días a las 00:00 UTC (Seguro contra el límite de 7 días)
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # Permite que le des al botón "Run" manualmente para probar
+
+jobs:
+  ping-db:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar librería de conexión
+        # Usamos psycopg2-binary que es más fácil de instalar en entornos Linux básicos
+        run: pip install psycopg2-binary
+
+      - name: Ejecutar script de latido
+        # Aquí mapeamos los SECRETOS de GitHub a VARIABLES DE ENTORNO para el script
+        env:
+          SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+          SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
+          SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
+          SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: python keep_alive.py
