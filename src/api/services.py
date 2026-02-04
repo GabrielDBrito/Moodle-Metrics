@@ -66,7 +66,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
     return {
         "id_curso": course_id,
         "id_asignatura": _sanitize_subject_code(course.get("shortname")),
-        "nombre_curso": course.get("fullname"),
+        "nombre_curso": _sanitize_course_name(course.get("fullname")),
         "id_profesor": prof_id,
         "nombre_profesor": prof_name,
         
@@ -128,3 +128,17 @@ def get_professor_name(course_id: int, config: Dict[str, Any]) -> Tuple[int, str
                     return prof_id, "SIN NOMBRE"
 
     return 0, "Unassigned"
+
+def _sanitize_course_name(fullname: Optional[str]) -> str:
+    """
+    Si el nombre tiene un guion, se queda solo con la parte izquierda.
+    Ej: "Ciudadanía - D. Leal" -> "Ciudadanía"
+    """
+    if not fullname:
+        return "SIN NOMBRE"
+    
+    # Divide el texto en el primer guion que encuentre y toma la primera parte
+    clean_name = fullname.split("-")[0]
+    
+    # Elimina espacios en blanco sobrantes al inicio y final
+    return clean_name.strip() 

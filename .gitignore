@@ -29,3 +29,4 @@ src/debug_*.py
 
 #---DB Info---
 db.env
+bdd.env
