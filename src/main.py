@@ -11,7 +11,7 @@ from utils.db import save_analytics_data_to_db # ¡Solo importamos la función t
 from utils.config_loader import load_config
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
-
+from utils.period_parser import get_academic_period 
 # --- Configuración (se mantiene igual) ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -46,39 +46,42 @@ def extract_departamento(category_path: str) -> str | None:
 # --- WORKER: Función que ejecuta la tarea para cada curso ---
 def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category_map: Dict[int, str]):
     """
-    Función de trabajo que procesa y guarda los datos de un curso.
+    Worker function to process and save course data.
     """
     try:
-        # 1. Calcular todos los indicadores
+        # 1. Calculate indicators
         data = process_course_analytics(config, course)
         if not data:
-            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes o <5 estudiantes"}
+            return {"status": "skipped", "id": course["id"], "reason": "Insufficient data"}
 
-        data["nombre_materia"] = data["nombre_curso"] # dim_asignatura espera 'nombre_materia', que es el mismo que 'nombre_curso'
-
-        # 2. Enriquecer el diccionario 'data' con información adicional
+        # 2. Enrich data
         categoria_id = data["categoria_id"]
         ruta_categoria = category_map.get(categoria_id, "")
         data["departamento"] = extract_departamento(ruta_categoria) or "OTRO"
         
-        fecha_origen = data.get("startdate") or data.get("timecreated")
-        if fecha_origen:
-            dt = datetime.fromtimestamp(int(fecha_origen))
-            anio = dt.year
-            trimestre = (dt.month - 1) // 3 + 1
-            data["id_tiempo"] = int(f"{anio}{trimestre}")
-            data["anio"] = anio
-            data["trimestre"] = trimestre
-            data["nombre_periodo"] = f"{anio} T{trimestre}"
-        else:
-             data["id_tiempo"] = None # Manejar casos sin fecha
+        # --- NEW TIME LOGIC IMPLEMENTATION ---
+        # We try 'startdate' first, then 'timecreated' as fallback
+        ts_reference = data.get("startdate") or data.get("timecreated") or 0
+        course_name = data.get("nombre_curso", "")
+        
+        # Call the new helper function
+        id_tiempo, nombre_periodo, anio, trimestre = get_academic_period(course_name, ts_reference)
+        
+        data["id_tiempo"] = id_tiempo       # e.g., "24251" or "2425I"
+        data["nombre_periodo"] = nombre_periodo # e.g., "2425-1"
+        data["anio"] = anio                 # e.g., 2024
+        data["trimestre"] = trimestre       # e.g., "1" or "I"
+        
+        # Special logic: If using existing 'nombre_materia' logic fix from previous step
+        data["nombre_materia"] = data["nombre_curso"]
 
-        # 3. Guardar en la base de datos de forma atómica y segura
+        # 3. Save to DB
         save_analytics_data_to_db(data)
 
         return {"status": "success", "data": data}
     except Exception as e:
         return {"status": "error", "id": course["id"], "error": str(e)}
+
 
 # --- MAIN: Orquestador Principal ---
 def main():
