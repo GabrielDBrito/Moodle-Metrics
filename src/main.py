@@ -6,7 +6,8 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Set, Dict, Any
 
-from utils.db import insert_course_data, insert_dim_asignatura, insert_dim_tiempo
+from utils.db import insert_course_data, insert_dim_asignatura, insert_dim_tiempo, insert_dim_profesor
+
 from utils.config_loader import load_config
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
@@ -98,7 +99,7 @@ def initialize_storage():
                 "ind_2_1_metod_activa",
                 "ind_2_2_ratio_eval",
 
-                "ind_3_1_procrastinacion",
+               "ind_3_1_selectividad",
                 "ind_3_2_feedback",
 
                 "fecha_extraccion"
@@ -242,7 +243,7 @@ def main():
                         d["ind_2_1_metod_activa"],
                         d["ind_2_2_ratio_eval"],
 
-                        d["ind_3_1_procrastinacion"],
+                        d["ind_3_1_selectividad"],
                         d["ind_3_2_feedback"],
 
                         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -277,12 +278,19 @@ def main():
                     "nombre_periodo": f"{anio} T{trimestre}"
                 })
 
+               # Insertar dimensión profesor
+                insert_dim_profesor({
+                    "id_profesor": d["id_profesor"],
+                    "nombre_profesor": d["nombre_profesor"]
+                })
+
+                # Insertar hecho (solo FK)
                 insert_course_data({
                     **d,
-                    "departamento": departamento,
-                    "profesor": d["nombre_profesor"],
+                    "id_profesor": d["id_profesor"],
                     "id_tiempo": id_tiempo
                 })
+
 
                 print(f"[{i}/{len(futures)}] {pct:.1f}% OK | {d['nombre_curso'][:40]}")
 
@@ -291,6 +299,38 @@ def main():
 
             else:
                 print(f"[{i}/{len(futures)}] ERROR ID {result['id']} → {result['error']}")
+    # Vaciar CSV manteniendo encabezado
+    with open(FACTS_FILENAME, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "id_curso",
+            "id_asignatura",
+            "nombre_curso",
+            "id_profesor",
+            "categoria_id",
+            "n_estudiantes_procesados",
+
+            "ind_1_1_cumplimiento",
+            "ind_1_2_aprobacion",
+            "ind_1_3_nota_promedio",
+            "ind_1_3_nota_mediana",
+            "ind_1_3_nota_desviacion",
+            "ind_1_4_participacion",
+            "ind_1_5_finalizacion",
+
+            "ind_2_1_metod_activa",
+            "ind_2_2_ratio_eval",
+
+            "ind_3_1_procrastinacion",
+            "ind_3_2_feedback",
+
+            "fecha_extraccion"
+        ])
+    with open(DIM_PROF_FILENAME, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(["id_profesor", "nombre_profesor"])
+
+    with open(DIM_SUBJ_FILENAME, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(["id_asignatura", "nombre_materia", "categoria_id"])
 
     print("[FIN] Ejecución terminada.")
 

@@ -94,7 +94,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "ind_2_2_ratio_eval": g2.get("ind_2_2_ratio_eval"),
 
         # --- GRUPO 3 (RENOMBRADO) ---
-        "ind_3_1_procrastinacion": g3.get("ind_3_1_procrastinacion"),
+        "ind_3_1_selectividad": g3.get("ind_3_1_selectividad"),
         "ind_3_2_feedback": g3.get("ind_3_2_feedback"),
     }
 
