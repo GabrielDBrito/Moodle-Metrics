@@ -90,11 +90,11 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
 
         "ind_1_5_finalizacion": g1["ind_1_5_finalizacion"],
 
-        # --- GRUPO 2 (RENOMBRADO) ---
+        # --- GRUPO 2 ---
         "ind_2_1_metod_activa": g2.get("ind_2_1_metod_activa"),
         "ind_2_2_ratio_eval": g2.get("ind_2_2_ratio_eval"),
 
-        # --- GRUPO 3 (RENOMBRADO) ---
+        # --- GRUPO 3 ---
         "ind_3_1_selectividad": g3.get("ind_3_1_selectividad"),
         "ind_3_2_feedback": g3.get("ind_3_2_feedback"),
     }

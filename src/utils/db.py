@@ -38,21 +38,21 @@ def save_analytics_data_to_db(data: dict):
     
     # "DO NOTHING" es eficiente para dimensiones que no cambian.
     sql_dim_tiempo = """
-        INSERT INTO dim_tiempo_test (id_tiempo, nombre_periodo, anio, trimestre)
+        INSERT INTO dim_tiempo (id_tiempo, nombre_periodo, anio, trimestre)
         VALUES (%(id_tiempo)s, %(nombre_periodo)s, %(anio)s, %(trimestre)s)
         ON CONFLICT (id_tiempo) DO NOTHING;
     """
     
     # "DO UPDATE" para dimensiones que podrían cambiar (ej. nombre del profesor).
     sql_dim_profesor = """
-        INSERT INTO dim_profesor_test (id_profesor, nombre_profesor)
+        INSERT INTO dim_profesor (id_profesor, nombre_profesor)
         VALUES (%(id_profesor)s, %(nombre_profesor)s)
         ON CONFLICT (id_profesor) DO UPDATE SET
             nombre_profesor = EXCLUDED.nombre_profesor;
     """
 
     sql_dim_asignatura = """
-        INSERT INTO dim_asignatura_test (id_asignatura, nombre_materia, departamento)
+        INSERT INTO dim_asignatura (id_asignatura, nombre_materia, departamento)
         VALUES (%(id_asignatura)s, %(nombre_materia)s, %(departamento)s)
         ON CONFLICT (id_asignatura) DO UPDATE SET
             nombre_materia = EXCLUDED.nombre_materia,
@@ -61,7 +61,7 @@ def save_analytics_data_to_db(data: dict):
     
     # La tabla de hechos siempre se actualiza con los últimos cálculos.
     sql_hechos_curso = """
-        INSERT INTO hecho_experiencia_curso_test (
+        INSERT INTO hecho_experiencia_curso (
             id_curso, id_tiempo, id_asignatura, id_profesor,
             ind_1_1_cumplimiento, ind_1_2_aprobacion, ind_1_3_nota_promedio,
             ind_1_3_nota_mediana, ind_1_3_nota_desviacion, ind_1_4_participacion,

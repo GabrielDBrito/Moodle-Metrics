@@ -31,7 +31,6 @@ def load_config():
     config = configparser.ConfigParser()
     config.read(config_path)
 
-    # --- NUEVA VALIDACIÓN ---
     # Aseguramos que existan las secciones críticas para evitar errores en main.py
     if 'MOODLE' not in config:
         raise ValueError("El archivo config.ini no tiene la sección [MOODLE]")

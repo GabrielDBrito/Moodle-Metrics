@@ -1,4 +1,4 @@
-# main.py (versión refactorizada)
+# main.py 
 
 import sys
 import os
@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any
 
 # --- Importaciones Simplificadas ---
-from utils.db import save_analytics_data_to_db # ¡Solo importamos la función transaccional!
+from utils.db import save_analytics_data_to_db 
 from utils.config_loader import load_config
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
@@ -21,7 +21,7 @@ MAX_WORKERS = 5
 BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD"]
 INVALID_DEPARTMENTS = {"POSTG", "DIDA", "AE", "U_V"}
 
-# --- Helpers de Categoría (se mantienen igual) ---
+# --- Helpers de Categoría ---
 def build_category_map(categories):
     by_id = {c["id"]: c for c in categories}
     result = {}
@@ -88,7 +88,7 @@ def main():
     print("--- UNIMET Analytics: Pipeline de Extracción Idempotente ---")
     config = load_config()
 
-    # Configuración de filtro de fechas (se mantiene igual)
+    # Configuración de filtro de fechas
     start_str = config['FILTERS']['start_date']
     min_ts = datetime.strptime(start_str, "%Y-%m-%d").timestamp()
     end_str = config['FILTERS']['end_date']
@@ -103,7 +103,6 @@ def main():
 
     courses_queue = []
     for c in raw_courses:
-        # SE ELIMINÓ LA COMPROBACIÓN DE IDs PROCESADOS
         if any(k in c["fullname"].upper() for k in BLACKLIST_KEYWORDS): continue
         cat_path = category_map.get(c.get("categoryid"), "").upper()
         if any(dep in cat_path for dep in INVALID_DEPARTMENTS): continue
@@ -119,7 +118,6 @@ def main():
     print(f"[INFO] Se procesarán y actualizarán {len(courses_queue)} cursos.")
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Ya no se abren archivos CSV aquí
         futures = {executor.submit(execute_course_task, c, config, category_map): c for c in courses_queue}
         
         for i, future in enumerate(as_completed(futures), 1):
