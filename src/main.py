@@ -1,50 +1,30 @@
+# main.py (versión refactorizada)
+
 import sys
 import os
-import csv
-import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Set, Dict, Any
+from typing import Dict, Any
 
-from utils.db import insert_course_data, insert_dim_asignatura, insert_dim_tiempo, insert_dim_profesor
-
+# --- Importaciones Simplificadas ---
+from utils.db import save_analytics_data_to_db # ¡Solo importamos la función transaccional!
 from utils.config_loader import load_config
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
 
-# --------------------------------------------------
-# PATH CONFIG
-# --------------------------------------------------
+# --- Configuración (se mantiene igual) ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# --------------------------------------------------
-# OUTPUT FILES
-# --------------------------------------------------
-FACTS_FILENAME = "hechos_curso_grupo1.csv"
-DIM_PROF_FILENAME = "dim_profesores.csv"
-DIM_SUBJ_FILENAME = "dim_asignaturas.csv"
-
-# --------------------------------------------------
-# SETTINGS
-# --------------------------------------------------
 MAX_WORKERS = 5
 BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD"]
 INVALID_DEPARTMENTS = {"POSTG", "DIDA", "AE", "U_V"}
 
-csv_lock = threading.Lock()
-
-# --------------------------------------------------
-# CATEGORY HELPERS (COPIADO DEL CÓDIGO QUE FUNCIONABA)
-# --------------------------------------------------
+# --- Helpers de Categoría (se mantienen igual) ---
 def build_category_map(categories):
-    """
-    {category_id: 'FACULTAD/DEPARTAMENTO/CATEGORIA'}
-    """
     by_id = {c["id"]: c for c in categories}
     result = {}
-
     def resolve(cat):
         names = [cat["name"]]
         parent = cat.get("parent", 0)
@@ -53,121 +33,63 @@ def build_category_map(categories):
             names.append(cat["name"])
             parent = cat.get("parent", 0)
         return "/".join(reversed(names))
-
     for c in categories:
         result[c["id"]] = resolve(c)
-
     return result
+
 def extract_departamento(category_path: str) -> str | None:
-    """
-    Extrae SOLO el segundo nivel de la ruta:
-    Facultad / Departamento / ...
-    """
-    if not category_path:
-        return None
-
+    if not category_path: return None
     parts = [p.strip() for p in category_path.split("/") if p.strip()]
-
-    if len(parts) < 2:
-        return "Otros"
-
+    if len(parts) < 2: return "Otros"
     return parts[1]
 
-# --------------------------------------------------
-# CSV INIT
-# --------------------------------------------------
-def initialize_storage():
-    if not os.path.exists(FACTS_FILENAME):
-        with open(FACTS_FILENAME, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "id_curso",
-                "id_asignatura",
-                "nombre_curso",
-                "id_profesor",
-                "categoria_id",
-                "n_estudiantes_procesados",
-
-                "ind_1_1_cumplimiento",
-                "ind_1_2_aprobacion",
-                "ind_1_3_nota_promedio",
-                "ind_1_3_nota_mediana",
-                "ind_1_3_nota_desviacion",
-                "ind_1_4_participacion",
-                "ind_1_5_finalizacion",
-
-                "ind_2_1_metod_activa",
-                "ind_2_2_ratio_eval",
-
-               "ind_3_1_selectividad",
-                "ind_3_2_feedback",
-
-                "fecha_extraccion"
-            ])
-
-    if not os.path.exists(DIM_PROF_FILENAME):
-        with open(DIM_PROF_FILENAME, "w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(["id_profesor", "nombre_profesor"])
-
-    if not os.path.exists(DIM_SUBJ_FILENAME):
-        with open(DIM_SUBJ_FILENAME, "w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(["id_asignatura", "nombre_materia", "categoria_id"])
-
-# --------------------------------------------------
-# LOADERS
-# --------------------------------------------------
-def load_processed_course_ids() -> Set[int]:
-    ids = set()
-    if os.path.exists(FACTS_FILENAME):
-        with open(FACTS_FILENAME, encoding="utf-8") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for r in reader:
-                if r:
-                    ids.add(int(r[0]))
-    return ids
-
-def load_existing_professor_ids() -> Set[int]:
-    ids = set()
-    if os.path.exists(DIM_PROF_FILENAME):
-        with open(DIM_PROF_FILENAME, encoding="utf-8") as f:
-            reader = csv.reader(f)
-            next(reader, None)
-            for r in reader:
-                if r:
-                    ids.add(int(r[0]))
-    return ids
-
-# --------------------------------------------------
-# WORKER
-# --------------------------------------------------
-def execute_course_task(course: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+# --- WORKER: Función que ejecuta la tarea para cada curso ---
+def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category_map: Dict[int, str]):
+    """
+    Función de trabajo que procesa y guarda los datos de un curso.
+    """
     try:
+        # 1. Calcular todos los indicadores
         data = process_course_analytics(config, course)
         if not data:
-            return {"status": "skipped", "id": course["id"], "reason": "Insufficient data/students (<5)"}
+            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes o <5 estudiantes"}
+
+        data["nombre_materia"] = data["nombre_curso"] # dim_asignatura espera 'nombre_materia', que es el mismo que 'nombre_curso'
+
+        # 2. Enriquecer el diccionario 'data' con información adicional
+        categoria_id = data["categoria_id"]
+        ruta_categoria = category_map.get(categoria_id, "")
+        data["departamento"] = extract_departamento(ruta_categoria) or "OTRO"
+        
+        fecha_origen = data.get("startdate") or data.get("timecreated")
+        if fecha_origen:
+            dt = datetime.fromtimestamp(int(fecha_origen))
+            anio = dt.year
+            trimestre = (dt.month - 1) // 3 + 1
+            data["id_tiempo"] = int(f"{anio}{trimestre}")
+            data["anio"] = anio
+            data["trimestre"] = trimestre
+            data["nombre_periodo"] = f"{anio} T{trimestre}"
+        else:
+             data["id_tiempo"] = None # Manejar casos sin fecha
+
+        # 3. Guardar en la base de datos de forma atómica y segura
+        save_analytics_data_to_db(data)
+
         return {"status": "success", "data": data}
     except Exception as e:
         return {"status": "error", "id": course["id"], "error": str(e)}
 
-# --------------------------------------------------
-# MAIN
-# --------------------------------------------------
+# --- MAIN: Orquestador Principal ---
 def main():
-    print("--- UNIMET Analytics: Pipeline de Extracción ---")
-
+    print("--- UNIMET Analytics: Pipeline de Extracción Idempotente ---")
     config = load_config()
-    initialize_storage()
 
-    processed_ids = load_processed_course_ids()
-    existing_professors = load_existing_professor_ids()
-
-    # Configuración filtro de fechas
+    # Configuración de filtro de fechas (se mantiene igual)
     start_str = config['FILTERS']['start_date']
     min_ts = datetime.strptime(start_str, "%Y-%m-%d").timestamp()
-
     end_str = config['FILTERS']['end_date']
-    max_ts = datetime.strptime(end_str, "%Y-%m-%d").timestamp() + 86399  # Para incluir todo el día final
+    max_ts = datetime.strptime(end_str, "%Y-%m-%d").timestamp() + 86399
 
     print("[INFO] Descargando categorías...")
     categories = call_moodle_api(config["MOODLE"], "core_course_get_categories")
@@ -178,159 +100,37 @@ def main():
 
     courses_queue = []
     for c in raw_courses:
-
-        if c["id"] in processed_ids:
-            continue
-
-        if any(k in c["fullname"].upper() for k in BLACKLIST_KEYWORDS):
-            continue
-
+        # SE ELIMINÓ LA COMPROBACIÓN DE IDs PROCESADOS
+        if any(k in c["fullname"].upper() for k in BLACKLIST_KEYWORDS): continue
         cat_path = category_map.get(c.get("categoryid"), "").upper()
-        if any(dep in cat_path for dep in INVALID_DEPARTMENTS):
-            continue
-
+        if any(dep in cat_path for dep in INVALID_DEPARTMENTS): continue
         c_start = c.get("startdate", 0)
-        if c_start < min_ts:
-            continue
-        if c_start > max_ts:
-            continue
-
+        if not (min_ts <= c_start <= max_ts): continue
+        
         courses_queue.append(c)
 
-    print(f"[INFO] Se procesarán {len(courses_queue)} cursos")
+    if not courses_queue:
+        print("[INFO] No hay cursos nuevos o para actualizar en el rango de fechas. Proceso finalizado.")
+        return
 
-  
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor, \
-         open(FACTS_FILENAME, "a", newline="", encoding="utf-8") as f_facts, \
-         open(DIM_PROF_FILENAME, "a", newline="", encoding="utf-8") as f_prof, \
-         open(DIM_SUBJ_FILENAME, "a", newline="", encoding="utf-8") as f_subj:
+    print(f"[INFO] Se procesarán y actualizarán {len(courses_queue)} cursos.")
 
-        writer_facts = csv.writer(f_facts)
-        writer_prof = csv.writer(f_prof)
-        writer_subj = csv.writer(f_subj)
-
-        futures = {executor.submit(execute_course_task, c, config): c for c in courses_queue}
-
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # Ya no se abren archivos CSV aquí
+        futures = {executor.submit(execute_course_task, c, config, category_map): c for c in courses_queue}
+        
         for i, future in enumerate(as_completed(futures), 1):
             result = future.result()
             pct = (i / len(futures)) * 100
+            course_id = result.get('id') or result.get('data', {}).get('id_curso')
 
             if result["status"] == "success":
-                d = result["data"]
-
-                categoria_id = d["categoria_id"]
-                ruta_categoria = category_map.get(categoria_id, "")
-                departamento = extract_departamento(ruta_categoria) or "OTRO"
-
-
-                with csv_lock:
-                    writer_facts.writerow([
-                        d["id_curso"],
-                        d["id_asignatura"],
-                        d["nombre_curso"],
-                        d["id_profesor"],
-                        categoria_id,
-                        d["n_estudiantes_procesados"],
-
-                        d["ind_1_1_cumplimiento"],
-                        d["ind_1_2_aprobacion"],
-                        d["ind_1_3_nota_promedio"],
-                        d["ind_1_3_nota_mediana"],
-                        d["ind_1_3_nota_desviacion"],
-                        d["ind_1_4_participacion"],
-                        d["ind_1_5_finalizacion"],
-
-                        d["ind_2_1_metod_activa"],
-                        d["ind_2_2_ratio_eval"],
-
-                        d["ind_3_1_selectividad"],
-                        d["ind_3_2_feedback"],
-
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    ])
-
-                    if d["id_profesor"] not in existing_professors:
-                        writer_prof.writerow([d["id_profesor"], d["nombre_profesor"]])
-                        existing_professors.add(d["id_profesor"])
-
-                    writer_subj.writerow([d["id_asignatura"], d["nombre_curso"], categoria_id])
-
-                # ---------------- SUPABASE ----------------
-                fecha_origen = d.get("startdate") or d.get("enddate") or d.get("timecreated")
-                if fecha_origen:
-                    dt = datetime.fromtimestamp(int(fecha_origen))
-                    anio = dt.year
-                    trimestre = (dt.month - 1) // 3 + 1
-                    id_tiempo = int(f"{anio}{trimestre}")
-                else:
-                    id_tiempo = None
-
-                insert_dim_asignatura({
-                    "id_asignatura": d["id_asignatura"],
-                    "nombre_materia": d["nombre_curso"],
-                    "departamento": departamento
-                })
-
-                insert_dim_tiempo({
-                    "id_tiempo": id_tiempo,
-                    "anio": anio,
-                    "trimestre": trimestre,
-                    "nombre_periodo": f"{anio} T{trimestre}"
-                })
-
-               # Insertar dimensión profesor
-                insert_dim_profesor({
-                    "id_profesor": d["id_profesor"],
-                    "nombre_profesor": d["nombre_profesor"]
-                })
-
-                # Insertar hecho (solo FK)
-                insert_course_data({
-                    **d,
-                    "id_profesor": d["id_profesor"],
-                    "id_tiempo": id_tiempo
-                })
-
-
-                print(f"[{i}/{len(futures)}] {pct:.1f}% OK | {d['nombre_curso'][:40]}")
-
+                course_name = result["data"]["nombre_curso"]
+                print(f"[{i}/{len(futures)}] {pct:.1f}% OK   | ID: {course_id} | {course_name[:40]}")
             elif result["status"] == "skipped":
-                print(f"[{i}/{len(futures)}] SKIP ID {result['id']}")
-
-            else:
-                print(f"[{i}/{len(futures)}] ERROR ID {result['id']} → {result['error']}")
-    # Vaciar CSV manteniendo encabezado
-    with open(FACTS_FILENAME, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "id_curso",
-            "id_asignatura",
-            "nombre_curso",
-            "id_profesor",
-            "categoria_id",
-            "n_estudiantes_procesados",
-
-            "ind_1_1_cumplimiento",
-            "ind_1_2_aprobacion",
-            "ind_1_3_nota_promedio",
-            "ind_1_3_nota_mediana",
-            "ind_1_3_nota_desviacion",
-            "ind_1_4_participacion",
-            "ind_1_5_finalizacion",
-
-            "ind_2_1_metod_activa",
-            "ind_2_2_ratio_eval",
-
-            "ind_3_1_procrastinacion",
-            "ind_3_2_feedback",
-
-            "fecha_extraccion"
-        ])
-    with open(DIM_PROF_FILENAME, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow(["id_profesor", "nombre_profesor"])
-
-    with open(DIM_SUBJ_FILENAME, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow(["id_asignatura", "nombre_materia", "categoria_id"])
+                print(f"[{i}/{len(futures)}] {pct:.1f}% SKIP | ID: {course_id} | Razón: {result.get('reason')}")
+            else: # status == "error"
+                print(f"[{i}/{len(futures)}] {pct:.1f}% ERROR| ID: {course_id} | Detalle: {result.get('error')}")
 
     print("[FIN] Ejecución terminada.")
 
