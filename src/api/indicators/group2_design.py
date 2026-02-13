@@ -1,7 +1,6 @@
 from typing import Dict, Any
-from .group1_results import extract_valid_evaluable_module_types
 
-# Taxonomía pedagógica
+# Pedagogical taxonomy for active learning modules
 ACTIVE_MODULES = {
     "assign", "quiz", "forum", "workshop", "lesson",
     "choice", "feedback", "glossary", "h5pactivity"
@@ -10,63 +9,71 @@ ACTIVE_MODULES = {
 def calculate_design_metrics(
     course_contents: Dict[str, Any],
     grades_data: Dict[str, Any]
-) -> Dict[str, float]:
-
+) -> Dict[str, Any]:
+    """
+    Analyzes the course structure to determine instructional design KPIs.
+    
+    This function evaluates the ratio of active vs. passive modules and 
+    the balance between summative (evaluated) and formative activities.
+    """
     if not course_contents or not isinstance(course_contents, list):
         return {}
 
+    # Import locally to avoid circular dependencies if any
+    from .group1_results import extract_valid_evaluable_module_types
+    
     valid_evaluable_modules = extract_valid_evaluable_module_types(grades_data)
 
-    if not valid_evaluable_modules:
-        return {}
-
-    total_active = 0
-    evaluated_active = 0
-    non_evaluated_active = 0
-    total_modules = 0  # Contador total de módulos visibles
-
+    # Counters for instructional design components
+    total_visible_modules = 0
+    total_active_modules = 0
+    evaluated_active_modules = 0
+    
+    # Iterate through course sections and modules
     for section in course_contents:
         for module in section.get("modules", []):
+            # Only count modules visible to students
             if not module.get("visible", False):
                 continue
 
-            total_modules += 1  # contar todos los módulos visibles
-
+            total_visible_modules += 1
             modname = module.get("modname")
-            if modname not in ACTIVE_MODULES:
-                continue
 
-            total_active += 1  # contar módulos activos según taxonomía
+            # Check if the module belongs to the active methodology taxonomy
+            if modname in ACTIVE_MODULES:
+                total_active_modules += 1
+                
+                # Check if this specific active module is actually being graded
+                if modname in valid_evaluable_modules:
+                    evaluated_active_modules += 1
 
-            if modname in valid_evaluable_modules:
-                evaluated_active += 1
-            else:
-                non_evaluated_active += 1
+    # Default values to prevent division by zero
+    metod_activa_pct = 0.0
+    ratio_eval_pct = 0.0
 
-    if total_modules == 0:
-        # evitar división por cero
-        return {
-            "ind_2_1_metodologia_activa_ratio": 0.0,
-            "ind_2_1_metod_activa": 0.0,
-            "ind_2_2_ratio_eval": 0.0
-        }
+    # Calculate Local Indicators (Course Level)
+    if total_visible_modules > 0:
+        metod_activa_pct = (total_active_modules / total_visible_modules) * 100
 
-    metodologia_activa_ratio = total_active / total_modules
-    metodologia_activa_pct = metodologia_activa_ratio * 100
+    if total_active_modules > 0:
+        ratio_eval_pct = (evaluated_active_modules / total_active_modules) * 100
+    else:
+        # If no active modules exist, the evaluation ratio doesn't apply
+        # However, for consistency in dashboards, we keep it as 0
+        ratio_eval_pct = 0.0
 
-    non_evaluated_active = max(non_evaluated_active, 0)
-    eval_noeval_ratio = (
-        evaluated_active / non_evaluated_active
-        if non_evaluated_active > 0 else float(evaluated_active)
-    )
-
-    balance_eval = evaluated_active / (evaluated_active + non_evaluated_active) if (evaluated_active + non_evaluated_active) > 0 else 0
-    balance_eval_pct = balance_eval * 100
-    if balance_eval_pct == 0:
-        balance_eval_pct = 100
     return {
-        #"ind_2_1_metodologia_activa_ratio": round(metodologia_activa_ratio, 4),
-        "ind_2_1_metod_activa": round(metodologia_activa_pct, 2),
-        #"ind_2_2_eval_noeval_ratio": round(eval_noeval_ratio, 4),
-        "ind_2_2_ratio_eval": round(balance_eval_pct, 2)
+        # --- Course Level Indicators (Percentages) ---
+        "ind_2_1_metod_activa": round(metod_activa_pct, 2),
+        "ind_2_2_ratio_eval": round(ratio_eval_pct, 2),
+
+        # --- Components for Global Aggregation (Numerators & Denominators) ---
+        
+        # Ind 2.1: Active Methodology = Active Modules / Total Modules
+        "ind_2_1_num": total_active_modules,
+        "ind_2_1_den": total_visible_modules,
+
+        # Ind 2.2: Evaluation Ratio = Evaluated Active / Total Active
+        "ind_2_2_num": evaluated_active_modules,
+        "ind_2_2_den": total_active_modules
     }

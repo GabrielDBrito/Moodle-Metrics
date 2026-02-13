@@ -1,119 +1,121 @@
-# db.py (versión refactorizada y unificada)
-
 import os
 import psycopg2
 from dotenv import load_dotenv
 from pathlib import Path
+from typing import Dict, Any
+import time
 
-# --- Carga de variables de entorno ---
-# (Esta parte se mantiene igual)
+# --- Environment Configuration ---
 BASE_DIR = Path(__file__).resolve().parents[2]
-ENV_PATH = BASE_DIR /"bdd.env"
+ENV_PATH = BASE_DIR / "bdd.env"
 load_dotenv(ENV_PATH)
 
-DB_HOST = os.getenv("SUPABASE_DB_HOST")
-DB_NAME = os.getenv("SUPABASE_DB_NAME")
-DB_USER = os.getenv("SUPABASE_DB_USER")
-DB_PASS = os.getenv("SUPABASE_DB_PASSWORD")
-DB_PORT = os.getenv("SUPABASE_DB_PORT")
-
 def get_db_connection():
-    """Establece y devuelve una conexión a la base de datos."""
+    """
+    Establishes a connection with a specific timeout to prevent hanging.
+    """
     return psycopg2.connect(
-        host=DB_HOST,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        port=DB_PORT,
-        sslmode="require"
+        host=os.getenv("SUPABASE_DB_HOST"),
+        dbname=os.getenv("SUPABASE_DB_NAME"),
+        user=os.getenv("SUPABASE_DB_USER"),
+        password=os.getenv("SUPABASE_DB_PASSWORD"),
+        port=os.getenv("SUPABASE_DB_PORT"),
+        sslmode="require",
+        connect_timeout=10 # Max 10 seconds to connect
     )
 
-def save_analytics_data_to_db(data: dict):
+def save_analytics_data_to_db(data: Dict[str, Any]):
     """
-    Guarda todos los datos de un curso en la base de datos de forma transaccional.
-    Utiliza la lógica UPSERT para insertar nuevos registros o actualizar los existentes.
-    """
-    
-    # --- Consultas SQL con la cláusula ON CONFLICT DO UPDATE ---
-    
-    # "DO NOTHING" es eficiente para dimensiones que no cambian.
-    sql_dim_tiempo = """
-        INSERT INTO dim_tiempo (id_tiempo, nombre_periodo, anio, trimestre)
-        VALUES (%(id_tiempo)s, %(nombre_periodo)s, %(anio)s, %(trimestre)s)
-        ON CONFLICT (id_tiempo) DO NOTHING;
+    Persists data using a single transaction. 
+    Added retry logic for transient database locks.
     """
     
-    # "DO UPDATE" para dimensiones que podrían cambiar (ej. nombre del profesor).
-    sql_dim_profesor = """
-        INSERT INTO dim_profesor (id_profesor, nombre_profesor)
-        VALUES (%(id_profesor)s, %(nombre_profesor)s)
-        ON CONFLICT (id_profesor) DO UPDATE SET
-            nombre_profesor = EXCLUDED.nombre_profesor;
-    """
-
-    sql_dim_asignatura = """
-        INSERT INTO dim_asignatura (id_asignatura, nombre_materia, departamento)
-        VALUES (%(id_asignatura)s, %(nombre_materia)s, %(departamento)s)
-        ON CONFLICT (id_asignatura) DO UPDATE SET
-            nombre_materia = EXCLUDED.nombre_materia,
-            departamento = EXCLUDED.departamento;
-    """
+    # We use DO NOTHING for dimensions to speed up and avoid row locks
+    sql_dim_time = "INSERT INTO dim_tiempo (id_tiempo, nombre_periodo, anio, trimestre) VALUES (%(id_tiempo)s, %(nombre_periodo)s, %(anio)s, %(trimestre)s) ON CONFLICT (id_tiempo) DO NOTHING;"
+    sql_dim_professor = "INSERT INTO dim_profesor (id_profesor, nombre_profesor) VALUES (%(id_profesor)s, %(nombre_profesor)s) ON CONFLICT (id_profesor) DO NOTHING;"
+    sql_dim_subject = "INSERT INTO dim_asignatura (id_asignatura, nombre_materia, departamento) VALUES (%(id_asignatura)s, %(nombre_materia)s, %(departamento)s) ON CONFLICT (id_asignatura) DO NOTHING;"
     
-    # La tabla de hechos siempre se actualiza con los últimos cálculos.
-    sql_hechos_curso = """
+    sql_fact_course = """
         INSERT INTO hecho_experiencia_curso (
             id_curso, id_tiempo, id_asignatura, id_profesor,
-            ind_1_1_cumplimiento, ind_1_2_aprobacion, ind_1_3_nota_promedio,
-            ind_1_3_nota_mediana, ind_1_3_nota_desviacion, ind_1_4_participacion,
-            ind_1_5_finalizacion, ind_2_1_metod_activa, ind_2_2_ratio_eval,
-            ind_3_1_selectividad, ind_3_2_feedback
+            n_estudiantes_procesados, n_estudiantes_totales,
+            ind_1_1_cumplimiento, ind_1_1_num, ind_1_1_den,
+            ind_1_2_aprobacion, ind_1_2_num, ind_1_2_den,
+            ind_1_3_nota_promedio, ind_1_3_num, ind_1_3_den,
+            ind_1_3_nota_mediana, ind_1_3_nota_desviacion,
+            ind_1_4_participacion, ind_1_4_num, ind_1_4_den,
+            ind_1_5_finalizacion, ind_1_5_num, ind_1_5_den,
+            ind_2_1_metod_activa, ind_2_1_num, ind_2_1_den,
+            ind_2_2_ratio_eval, ind_2_2_num, ind_2_2_den,
+            ind_3_1_selectividad, ind_3_1_num, ind_3_1_den,
+            ind_3_2_feedback, ind_3_2_num, ind_3_2_den,
+            fecha_extraccion
         ) VALUES (
             %(id_curso)s, %(id_tiempo)s, %(id_asignatura)s, %(id_profesor)s,
-            %(ind_1_1_cumplimiento)s, %(ind_1_2_aprobacion)s, %(ind_1_3_nota_promedio)s,
-            %(ind_1_3_nota_mediana)s, %(ind_1_3_nota_desviacion)s, %(ind_1_4_participacion)s,
-            %(ind_1_5_finalizacion)s, %(ind_2_1_metod_activa)s, %(ind_2_2_ratio_eval)s,
-            %(ind_3_1_selectividad)s, %(ind_3_2_feedback)s
+            %(n_estudiantes_procesados)s, %(n_estudiantes_totales)s,
+            %(ind_1_1_cumplimiento)s, %(ind_1_1_num)s, %(ind_1_1_den)s,
+            %(ind_1_2_aprobacion)s, %(ind_1_2_num)s, %(ind_1_2_den)s,
+            %(ind_1_3_nota_promedio)s, %(ind_1_3_num)s, %(ind_1_3_den)s,
+            %(ind_1_3_nota_mediana)s, %(ind_1_3_nota_desviacion)s,
+            %(ind_1_4_participacion)s, %(ind_1_4_num)s, %(ind_1_4_den)s,
+            %(ind_1_5_finalizacion)s, %(ind_1_5_num)s, %(ind_1_5_den)s,
+            %(ind_2_1_metod_activa)s, %(ind_2_1_num)s, %(ind_2_1_den)s,
+            %(ind_2_2_ratio_eval)s, %(ind_2_2_num)s, %(ind_2_2_den)s,
+            %(ind_3_1_selectividad)s, %(ind_3_1_num)s, %(ind_3_1_den)s,
+            %(ind_3_2_feedback)s, %(ind_3_2_num)s, %(ind_3_2_den)s,
+            NOW()
         )
         ON CONFLICT (id_curso) DO UPDATE SET
             id_tiempo = EXCLUDED.id_tiempo,
             id_asignatura = EXCLUDED.id_asignatura,
             id_profesor = EXCLUDED.id_profesor,
+            n_estudiantes_procesados = EXCLUDED.n_estudiantes_procesados,
+            n_estudiantes_totales = EXCLUDED.n_estudiantes_totales,
             ind_1_1_cumplimiento = EXCLUDED.ind_1_1_cumplimiento,
+            ind_1_1_num = EXCLUDED.ind_1_1_num, ind_1_1_den = EXCLUDED.ind_1_1_den,
             ind_1_2_aprobacion = EXCLUDED.ind_1_2_aprobacion,
+            ind_1_2_num = EXCLUDED.ind_1_2_num, ind_1_2_den = EXCLUDED.ind_1_2_den,
             ind_1_3_nota_promedio = EXCLUDED.ind_1_3_nota_promedio,
+            ind_1_3_num = EXCLUDED.ind_1_3_num, ind_1_3_den = EXCLUDED.ind_1_3_den,
             ind_1_3_nota_mediana = EXCLUDED.ind_1_3_nota_mediana,
             ind_1_3_nota_desviacion = EXCLUDED.ind_1_3_nota_desviacion,
             ind_1_4_participacion = EXCLUDED.ind_1_4_participacion,
+            ind_1_4_num = EXCLUDED.ind_1_4_num, ind_1_4_den = EXCLUDED.ind_1_4_den,
             ind_1_5_finalizacion = EXCLUDED.ind_1_5_finalizacion,
+            ind_1_5_num = EXCLUDED.ind_1_5_num, ind_1_5_den = EXCLUDED.ind_1_5_den,
             ind_2_1_metod_activa = EXCLUDED.ind_2_1_metod_activa,
+            ind_2_1_num = EXCLUDED.ind_2_1_num, ind_2_1_den = EXCLUDED.ind_2_1_den,
             ind_2_2_ratio_eval = EXCLUDED.ind_2_2_ratio_eval,
+            ind_2_2_num = EXCLUDED.ind_2_2_num, ind_2_2_den = EXCLUDED.ind_2_2_den,
             ind_3_1_selectividad = EXCLUDED.ind_3_1_selectividad,
-            ind_3_2_feedback = EXCLUDED.ind_3_2_feedback;
+            ind_3_1_num = EXCLUDED.ind_3_1_num, ind_3_1_den = EXCLUDED.ind_3_1_den,
+            ind_3_2_feedback = EXCLUDED.ind_3_2_feedback,
+            ind_3_2_num = EXCLUDED.ind_3_2_num, ind_3_2_den = EXCLUDED.ind_3_2_den,
+            fecha_extraccion = NOW();
     """
 
-    conn = None
-    try:
-        # 1. Abrir UNA SOLA conexión
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            # 2. Ejecutar todas las consultas dentro de la misma transacción
-            if data.get("id_tiempo"):
-                cur.execute(sql_dim_tiempo, data)
-            
-            cur.execute(sql_dim_profesor, data)
-            cur.execute(sql_dim_asignatura, data)
-            cur.execute(sql_hechos_curso, data)
-        
-        # 3. Si todo va bien, confirmar los cambios
-        conn.commit()
-    except Exception as e:
-        # 4. Si algo falla, revertir todo
-        if conn:
-            conn.rollback()
-        print(f"[ERROR DB] Falla en transacción para el curso {data.get('id_curso')}: {e}")
-        # Re-lanzar la excepción para que el worker principal la capture como un error
-        raise
-    finally:
-        # 5. Cerrar la conexión
-        if conn:
-            conn.close()
+    # Simple retry logic for locks
+    for attempt in range(3):
+        conn = None
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                # Set a short statement timeout (15 seconds) so it doesn't hang forever
+                cur.execute("SET statement_timeout = 15000;") 
+                
+                if data.get("id_tiempo"):
+                    cur.execute(sql_dim_time, data)
+                cur.execute(sql_dim_professor, data)
+                cur.execute(sql_dim_subject, data)
+                cur.execute(sql_fact_course, data)
+            conn.commit()
+            return # Success!
+        except Exception as e:
+            if conn: conn.rollback()
+            if "timeout" in str(e).lower() or "lock" in str(e).lower():
+                time.sleep(1) # Wait a bit before retrying
+                continue
+            print(f"[DB ERROR] ID {data.get('id_curso')}: {e}")
+            raise
+        finally:
+            if conn: conn.close()

@@ -18,13 +18,8 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     """
     Analyzes course grade data to calculate academic performance and process KPIs.
     
-    The algorithm employs a 3-layer filtering strategy for task whitelisting:
-    1. Weight-based filtering (Hardened: ignores zero or null weights if any positive weight exists).
-    2. Participation-based statistical filtering.
-    3. Type-based exclusion (ignores course and category totals).
-    
-    Returns:
-        A dictionary of calculated KPIs or None if quality filters are not met.
+    Returns a dictionary containing both per-course percentages AND 
+    raw numerator/denominator components for accurate aggregation in BI tools.
     """
     if not grades_data or not isinstance(grades_data, dict):
         return None
@@ -124,18 +119,16 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
 
         # Refined Layer 1 & 2: Aggressive filtering of null/zero weights
         if has_explicit_weights:
-            # If weighted items exist, strictly discard anything with weight 0 or weight None
             is_invalid_weight = (meta['wraw'] is None) or (meta['wraw'] <= 0.0001) or ('0.00' in meta['wfmt'])
             if is_invalid_weight:
                 continue
         else:
-            # Statistical fallback if no weights are defined
             if participation_pct < MIN_PARTICIPATION_RATE:
                 continue
         
         whitelisted_indices.append(idx)
 
-    # Detect Digital Deserts (courses using Moodle as a mere repository)
+    # Detect Digital Deserts
     is_digital_desert = (len(whitelisted_indices) == 0)
 
     # ---------------------------------------------------------
@@ -156,7 +149,6 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
                         completed_tasks += 1
                 except (IndexError, AttributeError): pass
 
-            # Extract normalized final grade
             student_final_raw = 0.0
             for item in student.get('gradeitems', []):
                 if item.get('itemtype') == 'course' and item.get('graderaw') is not None:
@@ -175,11 +167,17 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     # ---------------------------------------------------------
     # STEP 2: Aggregation of Student KPIs
     # ---------------------------------------------------------
-    total_checks_count = 0
-    total_potential_capacity = 0
-    active_students_count = 0
-    finisher_students_count = 0
-    passing_students_count = 0
+    # Counters for Numerators
+    total_checks_count = 0      # Ind 1.1 Num
+    total_potential_capacity = 0 # Ind 1.1 Den
+    
+    passing_students_count = 0  # Ind 1.2 Num
+    active_students_count = 0   # Ind 1.4 Num
+    finisher_students_count = 0 # Ind 1.5 Num
+    
+    # Denominators
+    # processed_count -> Used for Ind 1.2 and Ind 1.5 (Students who participated)
+    # total_valid_students -> Used for Ind 1.4 (Total enrollment)
     
     grades_pool = []
     qualified_grades_for_avg = []
@@ -210,7 +208,7 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
                 except (IndexError, AttributeError): continue
             total_checks_count += student_completed_count
 
-        # C. Eligibility Check
+        # C. Eligibility Check (Filter for "Processed Students")
         is_participant = (has_final and raw_final >= 0.1) or (student_completed_count > 0)
         if not is_participant: continue
 
@@ -252,10 +250,12 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     # ---------------------------------------------------------
     # STEP 3: Final KPI Compilation
     # ---------------------------------------------------------
+    # Statistics for local display
     avg_val = statistics.mean(qualified_grades_for_avg) if qualified_grades_for_avg else 0.0
     med_val = statistics.median(qualified_grades_for_avg) if qualified_grades_for_avg else 0.0
     dev_val = statistics.stdev(qualified_grades_for_avg) if len(qualified_grades_for_avg) > 1 else 0.0
 
+    # Local Percentages (Course Level)
     approval_rate = (passing_students_count / processed_count) * 100
     activity_rate = (active_students_count / total_valid_students) * 100 if total_valid_students > 0 else 0.0
 
@@ -267,23 +267,52 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
         compliance = min(round(compliance, 2), 100.0)
         completion = round(completion, 2)
 
+    # Aggregation Components for Ind 1.3 (Grade Average)
+    # To get Global Average = Sum(All Grades) / Count(All Graded Students)
+    grade_sum = sum(qualified_grades_for_avg)
+    grade_count = len(qualified_grades_for_avg)
+
     return {
+        # --- Metadata ---
         "n_estudiantes_procesados": processed_count,
+        "n_estudiantes_totales": total_valid_students,
+
+        # --- Course Level Indicators (Percentages/Stats) ---
         "ind_1_1_cumplimiento": compliance,
         "ind_1_2_aprobacion": round(approval_rate, 2),
         "ind_1_3_nota_promedio": round(avg_val, 2),
         "ind_1_3_nota_mediana": round(med_val, 2),
         "ind_1_3_nota_desviacion": round(dev_val, 2),
-        "ind_1_4_activos": round(activity_rate, 2), 
-        "ind_1_5_finalizacion": completion
-    }
+        "ind_1_4_participacion": round(activity_rate, 2), 
+        "ind_1_5_finalizacion": completion,
 
+        # --- Components for Global Aggregation (Numerators & Denominators) ---
+        # Ind 1.1: Compliance = Checks / Potential Capacity
+        "ind_1_1_num": total_checks_count,
+        "ind_1_1_den": total_potential_capacity if not is_digital_desert else 0,
+
+        # Ind 1.2: Approval = Passed / Processed
+        "ind_1_2_num": passing_students_count,
+        "ind_1_2_den": processed_count,
+
+        # Ind 1.3: Grade Avg = Sum Grades / Count Grades
+        "ind_1_3_num": round(grade_sum, 2),
+        "ind_1_3_den": grade_count,
+
+        # Ind 1.4: Activity = Active / Total Enrollment (valid students)
+        "ind_1_4_num": active_students_count,
+        "ind_1_4_den": total_valid_students,
+
+        # Ind 1.5: Completion = Finishers / Processed
+        "ind_1_5_num": finisher_students_count,
+        "ind_1_5_den": processed_count
+    }
 def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
     """
-    Extrae los tipos de módulos evaluables válidos (assign, quiz, forum, etc.)
-
-    Retorna:
-        Set[str]: nombres de módulos evaluables reales del curso
+    Extracts the set of module types (e.g., 'assign', 'quiz') that are considered 
+    valid evaluable items in the course based on the 3-layer filtering logic.
+    
+    Used by Group 2 indicators to determine which active modules are graded.
     """
     if not grades_data or not isinstance(grades_data, dict):
         return set()
@@ -292,6 +321,8 @@ def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
     if not user_grades or not isinstance(user_grades, list):
         return set()
 
+    # 1. Inspect structure from the first valid student
+    # (Simplified approach reusing the logic structure)
     max_columns = 0
     for student in user_grades:
         if student.get('gradeitems'):
@@ -300,6 +331,7 @@ def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
     if max_columns == 0:
         return set()
 
+    # Gather metadata and participation stats
     participation_counts = [0] * max_columns
     items_metadata = [None] * max_columns
     total_valid_students = 0
@@ -314,7 +346,7 @@ def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
                 if items_metadata[idx] is None:
                     items_metadata[idx] = {
                         'type': item.get('itemtype'),
-                        'module': item.get('itemmodule'),
+                        'module': item.get('itemmodule'), # Crucial: Capture module type
                         'gmax': float(item.get('grademax', 0)),
                         'wraw': float(item.get('weightraw')) if item.get('weightraw') is not None else None,
                         'wfmt': item.get('weightformatted', '')
@@ -324,39 +356,37 @@ def extract_valid_evaluable_module_types(grades_data: Dict[str, Any]) -> set:
             except (ValueError, TypeError, IndexError):
                 continue
 
-    # Detect explicit weights
+    # Detect explicit weights strategy
     has_explicit_weights = False
     for meta in items_metadata:
         if not meta or meta['type'] in ('course', 'category'):
             continue
-        if (meta['wraw'] is not None and meta['wraw'] > 0.0001) or (
-            meta['wfmt'] and '0.00' not in meta['wfmt']
-        ):
+        if (meta['wraw'] is not None and meta['wraw'] > 0.0001) or (meta['wfmt'] and '0.00' not in meta['wfmt']):
             has_explicit_weights = True
             break
 
+    # Identify valid modules
     valid_modules = set()
-
     for idx, meta in enumerate(items_metadata):
         if not meta or meta['type'] in ('course', 'category'):
             continue
+        
+        # Filter: meaningful max grade
         if meta['gmax'] <= 0.01:
             continue
 
         participation_pct = participation_counts[idx] / total_valid_students if total_valid_students else 0
 
+        # Filter: Weights or Participation
         if has_explicit_weights:
-            invalid_weight = (
-                meta['wraw'] is None or
-                meta['wraw'] <= 0.0001 or
-                '0.00' in meta['wfmt']
-            )
-            if invalid_weight:
+            is_invalid_weight = (meta['wraw'] is None) or (meta['wraw'] <= 0.0001) or ('0.00' in meta['wfmt'])
+            if is_invalid_weight:
                 continue
         else:
             if participation_pct < MIN_PARTICIPATION_RATE:
                 continue
 
+        # If it survived filters, add the module name (e.g. 'assign', 'quiz')
         if meta.get('module'):
             valid_modules.add(meta['module'])
 
