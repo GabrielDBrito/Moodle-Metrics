@@ -105,7 +105,7 @@ def run_pipeline(
         else:
             print(msg)
 
-    log("--- UNIMET Analytics: Iniciando Pipeline ETL ---")
+    log("--- UNIMET Analytics: Iniciando ETL ---")
     if stop_event and stop_event.is_set(): return
 
     config = load_config()
