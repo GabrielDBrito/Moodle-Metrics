@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, Callable, Optional
@@ -17,7 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# --- Global Settings (RESTAURADOS) ---
+# --- Global Settings ---
 MAX_WORKERS = 4 
 BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD"]
 INVALID_DEPARTMENTS = {"POSTG", "DIDA", "AE", "U_V"}
@@ -52,21 +53,15 @@ def extract_departamento(category_path: str) -> str | None:
 
 # --- WORKER: Process individual course ---
 def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category_map: Dict[int, str]) -> Dict[str, Any]:
-    """
-    Orchestrates the extraction, enrichment, and persistence of a single course.
-    Includes benchmarking to track Moodle API vs Database performance.
-    """
+    """Orchestrates extraction and persistence of a single course."""
     try:
         start_time = time.time()
-        
-        # 1. Extraction & Calculation via Moodle API
         data = process_course_analytics(config, course)
         moodle_bench = time.time() - start_time
         
         if not data:
-            return {"status": "skipped", "id": course["id"], "reason": "Insufficient data"}
+            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes"}
 
-        # 2. Enrichment: Department & Academic Period
         category_id = data["categoria_id"]
         category_path = category_map.get(category_id, "")
         data["departamento"] = extract_departamento(category_path) or "OTRO"
@@ -84,7 +79,6 @@ def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category
             "nombre_materia": data["nombre_curso"] 
         })
 
-        # 3. Persistence: Database Transaction
         db_start = time.time()
         save_analytics_data_to_db(data)
         db_bench = time.time() - db_start
@@ -98,21 +92,22 @@ def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category
         return {"status": "error", "id": course["id"], "error": str(e)}
 
 
-# --- MAIN PIPELINE: Now wrapped for GUI support ---
+# --- MAIN PIPELINE ---
 def run_pipeline(
     progress_callback: Optional[Callable[[int, int], None]] = None,
-    log_callback: Optional[Callable[[str], None]] = None
-):
-    """
-    Main ETL execution. Uses callbacks to communicate with the GUI.
-    """
+    log_callback: Optional[Callable[[str], None]] = None,
+    stop_event: Optional[threading.Event] = None # Support for cancellation
+    ):
+    """Main ETL execution with GUI support and stop signals."""
     def log(msg: str):
         if log_callback:
             log_callback(msg)
         else:
             print(msg)
 
-    log("--- UNIMET Analytics: ETL Pipeline Started ---")
+    log("--- UNIMET Analytics: Iniciando Pipeline ETL ---")
+    if stop_event and stop_event.is_set(): return
+
     config = load_config()
 
     try:
@@ -121,53 +116,50 @@ def run_pipeline(
         end_str = config['FILTERS']['end_date']
         max_ts = datetime.strptime(end_str, "%Y-%m-%d").timestamp() + 86399
     except Exception as e:
-        log(f" [!] Error in config dates: {e}")
+        log(f" [!] Error en las fechas de configuración: {e}")
         return
 
-    log(" [1/3] Fetching category metadata...")
+    log(" [1/3] Descargando metadatos de categorías...")
     categories = call_moodle_api(config["MOODLE"], "core_course_get_categories")
     if not categories:
-        log(" [!] Connection failed: Categories not found.")
+        log(" [!] Error de conexión: No se encontraron categorías.")
         return
     category_map = build_category_map(categories)
 
-    log(" [2/3] Fetching target course catalog...")
+    if stop_event and stop_event.is_set(): return
+
+    log(" [2/3] Descargando catálogo de cursos...")
     raw_courses = get_target_courses(config)
     if not raw_courses:
-        log(" [!] Connection failed: No courses retrieved.")
+        log(" [!] Error de conexión: No se obtuvieron cursos.")
         return
 
-    # --- Filtering Logic (RESTAURADA) ---
     courses_queue = []
     for c in raw_courses:
-        # Filter by Blacklist Keywords
-        if any(k in c["fullname"].upper() for k in BLACKLIST_KEYWORDS): 
-            continue
-        
-        # Filter by Invalid Departments
+        if any(k in c["fullname"].upper() for k in BLACKLIST_KEYWORDS): continue
         cat_path = category_map.get(c.get("categoryid"), "").upper()
-        if any(dep in cat_path for dep in INVALID_DEPARTMENTS): 
-            continue
-        
-        # Filter by Date Range
+        if any(dep in cat_path for dep in INVALID_DEPARTMENTS): continue
         c_start = c.get("startdate", 0)
-        if not (min_ts <= c_start <= max_ts): 
-            continue
-            
+        if not (min_ts <= c_start <= max_ts): continue
         courses_queue.append(c)
 
     total_courses = len(courses_queue)
     if total_courses == 0:
-        log(" [!] No courses found for the selected range.")
+        log(" [!] No se encontraron cursos en el rango seleccionado.")
         if progress_callback: progress_callback(1, 1)
         return
 
-    log(f" [3/3] Processing {total_courses} courses...")
+    log(f" [3/3] Procesando {total_courses} cursos...")
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(execute_course_task, c, config, category_map): c for c in courses_queue}
         
         for i, future in enumerate(as_completed(futures), 1):
+            if stop_event and stop_event.is_set():
+                log("⚠️ Proceso detenido por el usuario. Cancelando tareas...")
+                executor.shutdown(wait=False, cancel_futures=True)
+                break
+
             result = future.result()
             progress_pct = (i / total_courses) * 100
             course_id = result.get('id') or result.get('data', {}).get('id_curso')
@@ -177,16 +169,17 @@ def run_pipeline(
                 bench = result.get("bench", "")
                 log(f" {progress_pct:.1f}% OK | ID: {course_id} | {name} | {bench}")
             elif result["status"] == "skipped":
-                log(f" {progress_pct:.1f}% SKIP | ID: {course_id} | {result.get('reason')}")
+                log(f" {progress_pct:.1f}% OMITIR | ID: {course_id} | {result.get('reason')}")
             else:
                 log(f" {progress_pct:.1f}% ERR | ID: {course_id} | {result.get('error')}")
 
-            # GUI Update
             if progress_callback:
                 progress_callback(i, total_courses)
 
-    log("--- ETL Process Finished Successfully ---")
+    if stop_event and stop_event.is_set():
+        log("--- Proceso CANCELADO ---")
+    else:
+        log("--- Proceso ETL Finalizado con Éxito ---")
 
 if __name__ == "__main__":
-    # Standard terminal execution
     run_pipeline()
