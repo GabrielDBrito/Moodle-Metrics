@@ -30,3 +30,5 @@ src/debug_*.py
 #---DB Info---
 db.env
 bdd.env
+debug.py
+multi_debug.py

@@ -9,6 +9,7 @@ from typing import Dict, Any, Callable, Optional
 # --- Internal Imports ---
 from utils.db import save_analytics_data_to_db 
 from utils.config_loader import load_config
+from utils.filters import CourseFilter  # <--- NEW IMPORT
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
 from utils.period_parser import get_academic_period 
@@ -20,15 +21,12 @@ if current_dir not in sys.path:
 
 # --- Global Settings ---
 MAX_WORKERS = 4 
-BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD"]
-INVALID_DEPARTMENTS = {"POSTG", "DIDA", "AE", "U_V"}
 
 # --- Category Helpers ---
 def build_category_map(categories: list) -> Dict[int, str]:
     """Builds a full path mapping for Moodle categories."""
     by_id = {c["id"]: c for c in categories}
     result = {}
-    
     def resolve(cat):
         names = [cat["name"]]
         parent = cat.get("parent", 0)
@@ -37,31 +35,30 @@ def build_category_map(categories: list) -> Dict[int, str]:
             names.append(cat["name"])
             parent = cat.get("parent", 0)
         return "/".join(reversed(names))
-        
     for c in categories:
         result[c["id"]] = resolve(c)
     return result
 
 def extract_departamento(category_path: str) -> str | None:
-    """Extracts the department level (2nd level) from the category path."""
-    if not category_path: 
-        return None
+    """Extracts the department level from the category path."""
+    if not category_path: return None
     parts = [p.strip() for p in category_path.split("/") if p.strip()]
-    if len(parts) < 2: 
-        return "Otros"
+    if len(parts) < 2: return "Otros"
     return parts[1]
 
-# --- WORKER: Process individual course ---
+# --- WORKER ---
 def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category_map: Dict[int, str]) -> Dict[str, Any]:
-    """Orchestrates extraction and persistence of a single course."""
     try:
         start_time = time.time()
+        
+        # 1. Extraction & Calculation
         data = process_course_analytics(config, course)
         moodle_bench = time.time() - start_time
         
         if not data:
-            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes"}
+            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes o filtrados por calidad"}
 
+        # 2. Enrichment
         category_id = data["categoria_id"]
         category_path = category_map.get(category_id, "")
         data["departamento"] = extract_departamento(category_path) or "OTRO"
@@ -79,6 +76,7 @@ def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category
             "nombre_materia": data["nombre_curso"] 
         })
 
+        # 3. Persistence
         db_start = time.time()
         save_analytics_data_to_db(data)
         db_bench = time.time() - db_start
@@ -91,21 +89,20 @@ def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category
     except Exception as e:
         return {"status": "error", "id": course["id"], "error": str(e)}
 
-
 # --- MAIN PIPELINE ---
 def run_pipeline(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     log_callback: Optional[Callable[[str], None]] = None,
-    stop_event: Optional[threading.Event] = None # Support for cancellation
+    stop_event: Optional[threading.Event] = None 
     ):
-    """Main ETL execution with GUI support and stop signals."""
+    
     def log(msg: str):
         if log_callback:
             log_callback(msg)
         else:
             print(msg)
 
-    log("--- UNIMET Analytics: Iniciando ETL ---")
+    log("--- UNIMET Analytics: Iniciando Pipeline ETL ---")
     if stop_event and stop_event.is_set(): return
 
     config = load_config()
@@ -116,13 +113,13 @@ def run_pipeline(
         end_str = config['FILTERS']['end_date']
         max_ts = datetime.strptime(end_str, "%Y-%m-%d").timestamp() + 86399
     except Exception as e:
-        log(f" [!] Error en las fechas de configuración: {e}")
+        log(f" [!] Error en configuración de fechas: {e}")
         return
 
     log(" [1/3] Descargando metadatos de categorías...")
     categories = call_moodle_api(config["MOODLE"], "core_course_get_categories")
     if not categories:
-        log(" [!] Error de conexión: No se encontraron categorías.")
+        log(" [!] Error: Categorías no encontradas.")
         return
     category_map = build_category_map(categories)
 
@@ -131,21 +128,28 @@ def run_pipeline(
     log(" [2/3] Descargando catálogo de cursos...")
     raw_courses = get_target_courses(config)
     if not raw_courses:
-        log(" [!] Error de conexión: No se obtuvieron cursos.")
+        log(" [!] Error: Catálogo de cursos vacío.")
         return
 
+    # --- FILTERING LOGIC (Centralized) ---
     courses_queue = []
     for c in raw_courses:
-        if any(k in c["fullname"].upper() for k in BLACKLIST_KEYWORDS): continue
-        cat_path = category_map.get(c.get("categoryid"), "").upper()
-        if any(dep in cat_path for dep in INVALID_DEPARTMENTS): continue
+        cat_path = category_map.get(c.get("categoryid"), "")
         c_start = c.get("startdate", 0)
-        if not (min_ts <= c_start <= max_ts): continue
-        courses_queue.append(c)
+        
+        # Delegate validation to CourseFilter
+        if CourseFilter.is_valid_metadata(
+            course_fullname=c["fullname"],
+            category_path=cat_path,
+            course_start_ts=c_start,
+            min_ts=min_ts,
+            max_ts=max_ts
+        ):
+            courses_queue.append(c)
 
     total_courses = len(courses_queue)
     if total_courses == 0:
-        log(" [!] No se encontraron cursos en el rango seleccionado.")
+        log(" [!] No se encontraron cursos válidos para el rango seleccionado.")
         if progress_callback: progress_callback(1, 1)
         return
 
@@ -156,7 +160,7 @@ def run_pipeline(
         
         for i, future in enumerate(as_completed(futures), 1):
             if stop_event and stop_event.is_set():
-                log("⚠️ Proceso detenido por el usuario. Cancelando tareas...")
+                log("⚠️ Proceso detenido por el usuario.")
                 executor.shutdown(wait=False, cancel_futures=True)
                 break
 
@@ -179,7 +183,7 @@ def run_pipeline(
     if stop_event and stop_event.is_set():
         log("--- Proceso CANCELADO ---")
     else:
-        log("--- Proceso ETL Finalizado con Éxito ---")
+        log("--- Proceso Finalizado con Éxito ---")
 
 if __name__ == "__main__":
     run_pipeline()

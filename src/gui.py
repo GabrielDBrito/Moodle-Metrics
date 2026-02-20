@@ -14,7 +14,7 @@ UNIMET_NAVY       = "#003087"
 UNIMET_ORANGE     = "#F68629"
 UNIMET_LIGHT_BLUE = "#1859A9"
 UNIMET_WHITE      = "#FFFFFF"
-BG_COLOR          = "#F8F9FA"  # Gris muy claro de fondo
+BG_COLOR          = "#F8F9FA"  
 
 LOG_OK            = "#059669"
 LOG_ERROR         = "#DC2626"
