@@ -6,18 +6,13 @@ from utils.filters import CourseFilter
 TARGET_SCALE = 20.0
 PASSING_GRADE = 9.5
 DENSITY_ACTIVE = 0.40
-DENSITY_COMPLETE = 0.80
+DENSITY_COMPLETE = 0.70
 MIN_PARTICIPATION_RATE = 0.05
+SIGNIFICANT_WEIGHT_THRESHOLD = 0.05 # For Finalization KPI (ignores items < 5%)
 
 def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Analyzes course grade data with advanced quality and integrity filtering.
-    
-    This function handles:
-    1. Normalization of inconsistent Moodle scales.
-    2. Assessment hierarchy check (rejects flat/logbook structures).
-    3. Evaluation integrity check (rejects courses with missing major grades).
-    4. Maturity filtering (rejects early-stage courses).
     """
     if not grades_data or not isinstance(grades_data, dict):
         return None
@@ -26,11 +21,10 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     if not user_grades or not isinstance(user_grades, list):
         return None
         
-    # Layer 2: Population Check
     if len(user_grades) < CourseFilter.MIN_STUDENTS_REQUIRED:
         return None
 
-    # --- STEP 0: Normalization & Scale Analysis ---
+    # --- STEP 0: Normalization Analysis ---
     config_max_grade = 0.0
     global_max_observed = 0.0 
 
@@ -52,12 +46,12 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     normalize_divisor = config_max_grade if config_max_grade > 0 else 1.0
     should_normalize = (config_max_grade > 25.0) or (abs(config_max_grade - 20.0) > 0.1)
 
-    # Scale Protection: If Max is huge but grades are already in 0-20 scale
+    # Scale Protection
     if should_normalize and config_max_grade > 40.0 and global_max_observed <= 22.0:
         should_normalize = False
         normalize_divisor = 1.0
 
-    # --- STEP 1: Metadata, Participation & Manual Override Detection ---
+    # --- STEP 1: Metadata, Participation & Manual Override ---
     max_columns = max(len(s.get('gradeitems', [])) for s in user_grades)
     if max_columns == 0: return None
 
@@ -70,7 +64,6 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
         if not student or not student.get('gradeitems'): continue
         total_valid_students += 1
         
-        # Detect Manual Override on Course Total
         for item in student['gradeitems']:
             if item.get('itemtype') == 'course':
                 if item.get('overridden', 0) > 0:
@@ -81,6 +74,7 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
             if items_metadata[idx] is None:
                 items_metadata[idx] = {
                     'type': item.get('itemtype'),
+                    'module': item.get('itemmodule'),
                     'gmax': float(item.get('grademax', 0)),
                     'wraw': float(item.get('weightraw')) if item.get('weightraw') is not None else 0.0
                 }
@@ -116,32 +110,27 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     
     for idx in whitelisted_indices:
         meta = items_metadata[idx]
-        # Calculate weight: use explicit if available, otherwise relative points
         weight = meta['wraw'] if has_explicit_weights else (meta['gmax'] / total_grademax_sum)
         
         if weight > max_effective_weight:
             max_effective_weight = weight
             
-        # Integrity: check for completely empty columns (0 participation)
         if participation_counts[idx] == 0:
             total_missing_weight += weight
 
-    # 1. Structure Check (Hierarchy)
+    # Check Structure
     has_hierarchy = CourseFilter.has_valid_hierarchy(
         num_items=len(whitelisted_indices),
         has_explicit_weights=has_explicit_weights,
         max_grades_set=max_grades_found,
         max_effective_weight=max_effective_weight
     )
-
-    # 2. Rescue Clause: Check Manual Override Ratio
     override_ratio = manual_override_count / total_valid_students if total_valid_students > 0 else 0
 
-    # 3. Final Structural Decision
     if not CourseFilter.is_valid_assessment_structure(has_hierarchy, override_ratio):
         return None
 
-    # 4. Final Integrity Decision (Case 2515)
+    # Check Integrity
     if not CourseFilter.is_integrity_valid(total_missing_weight):
         return None
 
@@ -157,31 +146,46 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
 
     final_denominator = max(len(whitelisted_indices), max_tasks_by_passer)
 
-    total_checks = 0
-    total_potential = 0
-    passing_count = 0
-    active_count = 0
-    finisher_count = 0
-    qualified_grades = []
-    processed_count = 0
+    # --- Finalization KPI Adjustment (The fix for Case 2834) ---
+    significant_tasks_indices = []
+    if has_explicit_weights:
+        significant_tasks_indices = [
+            idx for idx in whitelisted_indices 
+            if items_metadata[idx]['wraw'] >= SIGNIFICANT_WEIGHT_THRESHOLD
+        ]
+    if not significant_tasks_indices:
+        significant_tasks_indices = whitelisted_indices
+        
+    significant_denominator = len(significant_tasks_indices)
+
+    # --- Aggregation Loop ---
+    total_checks = 0; total_potential = 0; passing_count = 0; active_count = 0
+    finisher_count = 0; qualified_grades = []; processed_count = 0
 
     for student in user_grades:
         items = student.get('gradeitems', [])
         raw_final = next((float(i['graderaw']) for i in items if i.get('itemtype') == 'course' and i.get('graderaw') is not None), 0.0)
-        student_completed = sum(1 for idx in whitelisted_indices if idx < len(items) and items[idx].get('graderaw') is not None)
         
-        if raw_final < 0.1 and student_completed == 0: continue
+        # Compliance KPI uses all tasks
+        student_completed_all = sum(1 for idx in whitelisted_indices if idx < len(items) and items[idx].get('graderaw') is not None)
+        total_checks += student_completed_all
+        
+        # Finalization KPI uses only significant tasks
+        student_completed_significant = sum(1 for idx in significant_tasks_indices if idx < len(items) and items[idx].get('graderaw') is not None)
+
+        if raw_final < 0.1 and student_completed_all == 0: continue
         processed_count += 1
         
         norm_grade = min((raw_final / normalize_divisor) * TARGET_SCALE if should_normalize else raw_final, TARGET_SCALE)
         if norm_grade >= PASSING_GRADE: passing_count += 1
 
-        density = student_completed / final_denominator if final_denominator > 0 else 0
-        if density >= DENSITY_ACTIVE or norm_grade >= PASSING_GRADE: active_count += 1
-        if density >= DENSITY_COMPLETE: finisher_count += 1
-        if norm_grade >= 0.5: qualified_grades.append(norm_grade)
+        density_all = student_completed_all / final_denominator if final_denominator > 0 else 0
+        density_significant = student_completed_significant / significant_denominator if significant_denominator > 0 else 0
         
-        total_checks += student_completed
+        if density_all >= DENSITY_ACTIVE or norm_grade >= PASSING_GRADE: active_count += 1
+        if density_significant >= DENSITY_COMPLETE: finisher_count += 1
+        if norm_grade >= 2.0: qualified_grades.append(norm_grade)
+        
         total_potential += final_denominator
 
     if not CourseFilter.is_valid_population(processed_count):
@@ -198,12 +202,12 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
         "n_estudiantes_procesados": processed_count,
         "n_estudiantes_totales": total_valid_students,
         "ind_1_1_cumplimiento": round(compliance, 2),
-        "ind_1_2_aprobacion": round((passing_count / processed_count) * 100, 2),
+        "ind_1_2_aprobacion": round((passing_count / processed_count) * 100 if processed_count > 0 else 0, 2),
         "ind_1_3_nota_promedio": round(avg_val, 2),
         "ind_1_3_nota_mediana": round(statistics.median(qualified_grades), 2) if qualified_grades else 0.0,
         "ind_1_3_nota_desviacion": round(statistics.stdev(qualified_grades), 2) if len(qualified_grades) > 1 else 0.0,
-        "ind_1_4_participacion": round((active_count / total_valid_students) * 100, 2), 
-        "ind_1_5_finalizacion": round((finisher_count / processed_count) * 100, 2),
+        "ind_1_4_participacion": round((active_count / total_valid_students) * 100 if total_valid_students > 0 else 0, 2), 
+        "ind_1_5_finalizacion": round((finisher_count / processed_count) * 100 if processed_count > 0 else 0, 2),
         "ind_1_1_num": total_checks, "ind_1_1_den": total_potential,
         "ind_1_2_num": passing_count, "ind_1_2_den": processed_count,
         "ind_1_3_num": round(sum(qualified_grades), 2), "ind_1_3_den": len(qualified_grades),

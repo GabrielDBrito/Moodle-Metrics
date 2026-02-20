@@ -9,7 +9,7 @@ import customtkinter as ctk
 # Import the ETL logic
 from main import run_pipeline
 
-# --- Paleta de Colores ---
+# --- Colors ---
 UNIMET_NAVY       = "#003087"
 UNIMET_ORANGE     = "#F68629"
 UNIMET_LIGHT_BLUE = "#1859A9"

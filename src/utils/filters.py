@@ -12,7 +12,7 @@ class CourseFilter:
     """
 
     # --- 1. Metadata Config ---
-    BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD"]
+    BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD", "CÓDIGO NARANJA", "CURSO", "Código Naranja", "CODIGO NARANJA"]
     INVALID_DEPARTMENTS = {
         "POSTG", "DIDA", "AE", "U_V", 
         "UNIMET TEACHING CENTER", "SERVICIO COMUNITARIO"
