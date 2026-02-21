@@ -137,9 +137,10 @@ def run_pipeline(
         cat_path = category_map.get(c.get("categoryid"), "")
         c_start = c.get("startdate", 0)
         
-        # Delegate validation to CourseFilter
+        # AJUSTE: Ahora pasamos también c["shortname"]
         if CourseFilter.is_valid_metadata(
             course_fullname=c["fullname"],
+            course_shortname=c["shortname"], # <--- Agregado
             category_path=cat_path,
             course_start_ts=c_start,
             min_ts=min_ts,

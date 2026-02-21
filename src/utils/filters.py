@@ -1,4 +1,5 @@
 from typing import Dict, Set, Tuple
+import unicodedata
 
 class CourseFilter:
     """
@@ -17,6 +18,7 @@ class CourseFilter:
         "POSTG", "DIDA", "AE", "U_V", 
         "UNIMET TEACHING CENTER", "SERVICIO COMUNITARIO"
     }
+    BLACKLIST_CODES = ["CODNA"]
 
     # --- 2. Population Config ---
     MIN_STUDENTS_REQUIRED = 5
@@ -34,13 +36,23 @@ class CourseFilter:
 
     # --- 5. Maturity Config ---
     PASSING_GRADE = 9.5
-    MIN_MATURITY_COMPLIANCE = 70.0
+    MIN_MATURITY_COMPLIANCE = 60.0
     MIN_ACCEPTABLE_AVG = 5.0
     STRICT_COMPLIANCE_FLOOR = 80.0
 
     @staticmethod
+    def _normalize_text(text: str) -> str:
+        """Helper to remove accents and convert to uppercase for safe comparison."""
+        if not text: return ""
+        # Remove accents/tildes
+        text = ''.join(c for c in unicodedata.normalize('NFD', text)
+                      if unicodedata.category(c) != 'Mn')
+        return text.upper()
+
+    @staticmethod
     def is_valid_metadata(
         course_fullname: str, 
+        course_shortname: str, # Added this argument
         category_path: str, 
         course_start_ts: int, 
         min_ts: float, 
@@ -48,20 +60,25 @@ class CourseFilter:
     ) -> bool:
         """
         Layer 1: Filters based on administrative metadata.
-        Checks for blacklisted names, invalid departments, and date ranges.
         """
-        name_upper = course_fullname.upper()
-        path_upper = category_path.upper()
+        norm_name = CourseFilter._normalize_text(course_fullname)
+        norm_path = CourseFilter._normalize_text(category_path)
+        norm_code = CourseFilter._normalize_text(course_shortname)
 
-        # 1. Keyword Check
-        if any(k in name_upper for k in CourseFilter.BLACKLIST_KEYWORDS):
+        # 1. Exact Code Check (The safest way)
+        # Check if the shortname starts with any blacklisted code
+        if any(norm_code.startswith(code) for code in CourseFilter.BLACKLIST_CODES):
             return False
 
-        # 2. Department Check
-        if any(d in path_upper for d in CourseFilter.INVALID_DEPARTMENTS):
+        # 2. Keyword Check (Normalized for accents)
+        if any(k in norm_name for k in CourseFilter.BLACKLIST_KEYWORDS):
             return False
 
-        # 3. Date Range Check
+        # 3. Department Check
+        if any(d in norm_path for d in CourseFilter.INVALID_DEPARTMENTS):
+            return False
+
+        # 4. Date Range Check
         if not (min_ts <= course_start_ts <= max_ts):
             return False
 
