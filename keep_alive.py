@@ -8,7 +8,8 @@ def ping_database():
             port=os.environ.get("SUPABASE_DB_PORT"),
             database=os.environ.get("SUPABASE_DB_NAME"),
             user=os.environ.get("SUPABASE_DB_USER"),
-            password=os.environ.get("SUPABASE_DB_PASSWORD")
+            password=os.environ.get("SUPABASE_DB_PASSWORD"),
+            sslmode='require'
         )
 
         cursor = connection.cursor()

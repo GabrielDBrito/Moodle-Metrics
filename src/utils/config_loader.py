@@ -1,42 +1,31 @@
 import configparser
 import os
-import sys
+from .paths import get_config_path 
 
 def load_config():
     """
     Loads the configuration from the 'config.ini' file.
-    It handles the path logic for both development (script) and production (executable/frozen).
+    It uses the centralized paths utility to resolve the correct location.
     
     Returns:
-        dict: A dictionary containing the configuration sections.
+        configparser.ConfigParser: The configuration object.
     """
-    # 1. Determine the application path (Logic for PyInstaller compatibility)
-    if getattr(sys, 'frozen', False):
-        # Running as compiled .exe
-        application_path = os.path.dirname(sys.executable)
-    else:
-        # Running as a python script
-        # Go up two levels from /src/utils/ to get to the root
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        application_path = os.path.dirname(os.path.dirname(current_dir))
+    config_path = get_config_path('config.ini')
 
-    # 2. Build the full path to config.ini
-    config_path = os.path.join(application_path, 'config.ini')
-
-    # 3. Validate existence
+    # 2. Validate existence
     if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Configuration file not found at: {config_path}")
+        raise FileNotFoundError(f"Configuration file not found at: {config_path}\nAsegúrate de que config.ini esté en la misma carpeta que el ejecutable.")
 
-    # 4. Parse the file
+    # 3. Parse the file
     config = configparser.ConfigParser()
     config.read(config_path)
 
-    # We ensure that critical sections exist to prevent errors in main.py
+    # 4. We ensure that critical sections exist to prevent errors
     if 'MOODLE' not in config:
         raise ValueError("El archivo config.ini no tiene la sección [MOODLE]")
     
     if 'FILTERS' not in config:
-        # If it doesn't exist, we inject default values ​​so that the script doesn't crash.
+        # If it doesn't exist, we inject default values
         config['FILTERS'] = {'start_date': '2023-01-01', 'end_date': '2025-12-31'}
 
     print(f"Configuration loaded successfully from: {config_path}")

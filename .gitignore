@@ -32,3 +32,4 @@ db.env
 bdd.env
 debug.py
 multi_debug.py
+_dev_tools/

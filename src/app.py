@@ -5,9 +5,9 @@ import time
 import re
 from datetime import datetime
 import customtkinter as ctk
-
-# Import the ETL logic
+from utils.paths import get_config_path
 from etl_pipeline import run_pipeline
+from utils.paths import get_resource_path 
 
 # --- Colors ---
 UNIMET_NAVY       = "#003087"
@@ -22,8 +22,7 @@ LOG_WARN          = "#D97706"
 LOG_INFO          = "#1859A9"
 LOG_TIMESTAMP     = "#9CA3AF"
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(BASE_DIR, 'config.ini')
+CONFIG_PATH = get_config_path('config.ini')
 
 class ETLApp(ctk.CTk):
     def __init__(self):
@@ -41,6 +40,12 @@ class ETLApp(ctk.CTk):
         self.resizable(False, False)
         self.configure(fg_color=BG_COLOR)
 
+        # --- SET WINDOW ICON ---
+        icon_path = get_resource_path("assets/app_icon.ico")
+        if os.path.exists(icon_path):
+            # We use after() to ensure the window is initialized before setting the icon
+            self.after(200, lambda: self.iconbitmap(icon_path))
+        
         # --- State Control ---
         self.stop_event = threading.Event()
         self.start_time = 0
