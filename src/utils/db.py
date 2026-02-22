@@ -6,21 +6,35 @@ from typing import Dict, Any
 import time
 
 # --- Environment Configuration ---
+# Compute workspace root (two levels above this module: src/utils -> src -> workspace)
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+# By convention we look for a dotenv file named either bdd.env at the repo root
+# or, for this project structure, src/db.env.  Some callers placed the file
+# under `src` during development, so we provide a fallback.
 ENV_PATH = BASE_DIR / "bdd.env"
+if not ENV_PATH.exists():
+    # fallback location inside src directory
+    ENV_PATH = BASE_DIR / "src" / "db.env"
+
+# load values (if file is missing nothing breaks; env vars can be exported directly)
 load_dotenv(ENV_PATH)
 
 def get_db_connection():
     """
     Establishes a connection with a specific timeout to prevent hanging.
     """
+# Allow overriding sslmode via environment variable (e.g. for testing/debugging)
+    host = os.getenv("SUPABASE_DB_HOST")
+    sslmode = os.getenv("SUPABASE_DB_SSLMODE", "require")
+
     return psycopg2.connect(
-        host=os.getenv("SUPABASE_DB_HOST"),
+        host=host,
         dbname=os.getenv("SUPABASE_DB_NAME"),
         user=os.getenv("SUPABASE_DB_USER"),
         password=os.getenv("SUPABASE_DB_PASSWORD"),
         port=os.getenv("SUPABASE_DB_PORT"),
-        sslmode="require",
+        sslmode=sslmode,
         connect_timeout=10 # Max 10 seconds to connect
     )
 
@@ -47,7 +61,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             ind_1_5_finalizacion, ind_1_5_num, ind_1_5_den,
             ind_2_1_metod_activa, ind_2_1_num, ind_2_1_den,
             ind_2_2_ratio_eval, ind_2_2_num, ind_2_2_den,
-            ind_3_1_selectividad, ind_3_1_num, ind_3_1_den,
+            ind_3_1_excelencia, ind_3_1_num, ind_3_1_den,
             ind_3_2_feedback, ind_3_2_num, ind_3_2_den,
             fecha_extraccion
         ) VALUES (
@@ -61,7 +75,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             %(ind_1_5_finalizacion)s, %(ind_1_5_num)s, %(ind_1_5_den)s,
             %(ind_2_1_metod_activa)s, %(ind_2_1_num)s, %(ind_2_1_den)s,
             %(ind_2_2_ratio_eval)s, %(ind_2_2_num)s, %(ind_2_2_den)s,
-            %(ind_3_1_selectividad)s, %(ind_3_1_num)s, %(ind_3_1_den)s,
+            %(ind_3_1_excelencia)s, %(ind_3_1_num)s, %(ind_3_1_den)s,
             %(ind_3_2_feedback)s, %(ind_3_2_num)s, %(ind_3_2_den)s,
             NOW()
         )
@@ -87,7 +101,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             ind_2_1_num = EXCLUDED.ind_2_1_num, ind_2_1_den = EXCLUDED.ind_2_1_den,
             ind_2_2_ratio_eval = EXCLUDED.ind_2_2_ratio_eval,
             ind_2_2_num = EXCLUDED.ind_2_2_num, ind_2_2_den = EXCLUDED.ind_2_2_den,
-            ind_3_1_selectividad = EXCLUDED.ind_3_1_selectividad,
+            ind_3_1_excelencia = EXCLUDED.ind_3_1_excelencia,
             ind_3_1_num = EXCLUDED.ind_3_1_num, ind_3_1_den = EXCLUDED.ind_3_1_den,
             ind_3_2_feedback = EXCLUDED.ind_3_2_feedback,
             ind_3_2_num = EXCLUDED.ind_3_2_num, ind_3_2_den = EXCLUDED.ind_3_2_den,

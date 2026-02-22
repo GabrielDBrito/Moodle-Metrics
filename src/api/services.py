@@ -132,7 +132,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "ind_2_2_den": g2.get("ind_2_2_den"),
 
         # --- GROUP 3 COMPONENTS ---
-        "ind_3_1_selectividad": g3.get("ind_3_1_selectividad"),
+        "ind_3_1_excelencia": g3.get("ind_3_1_excelencia"),
         "ind_3_1_num": g3.get("ind_3_1_num"),
         "ind_3_1_den": g3.get("ind_3_1_den"),
 
