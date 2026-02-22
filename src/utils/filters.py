@@ -44,7 +44,7 @@ class CourseFilter:
     def _normalize_text(text: str) -> str:
         """Helper to remove accents and convert to uppercase for safe comparison."""
         if not text: return ""
-        # Remove accents/tildes
+        # Remove accents
         text = ''.join(c for c in unicodedata.normalize('NFD', text)
                       if unicodedata.category(c) != 'Mn')
         return text.upper()
@@ -52,7 +52,7 @@ class CourseFilter:
     @staticmethod
     def is_valid_metadata(
         course_fullname: str, 
-        course_shortname: str, # Added this argument
+        course_shortname: str, 
         category_path: str, 
         course_start_ts: int, 
         min_ts: float, 

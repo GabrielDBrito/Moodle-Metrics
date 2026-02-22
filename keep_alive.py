@@ -13,7 +13,7 @@ def ping_database():
 
         cursor = connection.cursor()
         
-        # Ejecutamos una consulta trivial. Esto cuenta como "actividad".
+        # Simple query to test connectivity and response
         cursor.execute("SELECT 1;")
         result = cursor.fetchone()
         
@@ -24,7 +24,7 @@ def ping_database():
 
     except Exception as e:
         print(f"Error al enviar el latido: {e}")
-        # Importante: Si falla, hacemos que el Action falle para que te llegue un correo
+        # If it fails, we'll make the Action fail so you receive an email
         exit(1)
 
 if __name__ == "__main__":

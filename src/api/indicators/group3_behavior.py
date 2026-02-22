@@ -22,7 +22,7 @@ def calculate_group3_metrics_from_grades(grades_data: Dict[str, Any]) -> Optiona
 
         for item in student['gradeitems']:
 
-            # Detectar nota final del curso
+            # Get final grade and max for course-level item to evaluate excellence
             if item.get('itemtype') == 'course':
                 try:
                     final_grade = float(item.get('graderaw'))
@@ -30,14 +30,14 @@ def calculate_group3_metrics_from_grades(grades_data: Dict[str, Any]) -> Optiona
                 except (ValueError, TypeError):
                     continue
 
-            # Feedback sigue siendo por actividad evaluable
+            # Feedback is only relevant for graded items that are not the course-level final grade
             if item.get('itemtype') not in ('course', 'category'):
                 if item.get('graderaw') is not None:
                     total_graded_items += 1
                     if item.get('feedback'):
                         total_feedbacks += 1
 
-        # Evaluar excelencia a nivel estudiante
+        # Evaluate excellence based on final grade if available
         if final_grade is not None and final_gmax and final_gmax > 0:
             total_students += 1
             if (final_grade / final_gmax) >= 0.9:

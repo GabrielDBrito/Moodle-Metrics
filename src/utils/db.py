@@ -44,7 +44,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
     Added retry logic for transient database locks.
     """
     
-    # We use DO NOTHING for dimensions to speed up and avoid row locks
+    # We use do nothing for dimensions to speed up and avoid row locks
     sql_dim_time = "INSERT INTO dim_tiempo (id_tiempo, nombre_periodo, anio, trimestre) VALUES (%(id_tiempo)s, %(nombre_periodo)s, %(anio)s, %(trimestre)s) ON CONFLICT (id_tiempo) DO NOTHING;"
     sql_dim_professor = "INSERT INTO dim_profesor (id_profesor, nombre_profesor) VALUES (%(id_profesor)s, %(nombre_profesor)s) ON CONFLICT (id_profesor) DO NOTHING;"
     sql_dim_subject = "INSERT INTO dim_asignatura (id_asignatura, nombre_materia, departamento) VALUES (%(id_asignatura)s, %(nombre_materia)s, %(departamento)s) ON CONFLICT (id_asignatura) DO NOTHING;"
@@ -123,7 +123,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
                 cur.execute(sql_dim_subject, data)
                 cur.execute(sql_fact_course, data)
             conn.commit()
-            return # Success!
+            return 
         except Exception as e:
             if conn: conn.rollback()
             if "timeout" in str(e).lower() or "lock" in str(e).lower():

@@ -1,6 +1,5 @@
 import sys
 import os
-import time
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,7 +8,7 @@ from typing import Dict, Any, Callable, Optional
 # --- Internal Imports ---
 from utils.db import save_analytics_data_to_db 
 from utils.config_loader import load_config
-from utils.filters import CourseFilter  # <--- NEW IMPORT
+from utils.filters import CourseFilter 
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
 from utils.period_parser import get_academic_period 
@@ -49,11 +48,8 @@ def extract_departamento(category_path: str) -> str | None:
 # --- WORKER ---
 def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category_map: Dict[int, str]) -> Dict[str, Any]:
     try:
-        start_time = time.time()
-        
         # 1. Extraction & Calculation
         data = process_course_analytics(config, course)
-        moodle_bench = time.time() - start_time
         
         if not data:
             return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes o filtrados por calidad"}
@@ -77,14 +73,11 @@ def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category
         })
 
         # 3. Persistence
-        db_start = time.time()
         save_analytics_data_to_db(data)
-        db_bench = time.time() - db_start
 
         return {
             "status": "success", 
-            "data": data,
-            "bench": f"Moodle: {moodle_bench:.1f}s | DB: {db_bench:.1f}s"
+            "data": data
         }
     except Exception as e:
         return {"status": "error", "id": course["id"], "error": str(e)}
@@ -137,10 +130,10 @@ def run_pipeline(
         cat_path = category_map.get(c.get("categoryid"), "")
         c_start = c.get("startdate", 0)
         
-        # AJUSTE: Ahora pasamos también c["shortname"]
+        # Now we also pass c.get("shortname", "") to ensure safety
         if CourseFilter.is_valid_metadata(
             course_fullname=c["fullname"],
-            course_shortname=c["shortname"], # <--- Agregado
+            course_shortname=c.get("shortname", ""),
             category_path=cat_path,
             course_start_ts=c_start,
             min_ts=min_ts,
@@ -161,7 +154,7 @@ def run_pipeline(
         
         for i, future in enumerate(as_completed(futures), 1):
             if stop_event and stop_event.is_set():
-                log("⚠️ Proceso detenido por el usuario.")
+                log(" Proceso detenido por el usuario.")
                 executor.shutdown(wait=False, cancel_futures=True)
                 break
 
@@ -171,8 +164,7 @@ def run_pipeline(
 
             if result["status"] == "success":
                 name = result["data"]["nombre_curso"][:30]
-                bench = result.get("bench", "")
-                log(f" {progress_pct:.1f}% OK | ID: {course_id} | {name} | {bench}")
+                log(f" {progress_pct:.1f}% OK | ID: {course_id} | {name}")
             elif result["status"] == "skipped":
                 log(f" {progress_pct:.1f}% OMITIR | ID: {course_id} | {result.get('reason')}")
             else:

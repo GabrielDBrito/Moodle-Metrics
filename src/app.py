@@ -7,7 +7,7 @@ from datetime import datetime
 import customtkinter as ctk
 
 # Import the ETL logic
-from main import run_pipeline
+from etl_pipeline import run_pipeline
 
 # --- Colors ---
 UNIMET_NAVY       = "#003087"
@@ -73,7 +73,7 @@ class ETLApp(ctk.CTk):
                              font=ctk.CTkFont(size=14, weight="bold"), text_color="#333")
         instr.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 15))
 
-        # --- Campo Fecha Inicio ---
+        # --- Start date ---
         ctk.CTkLabel(grid, text="Desde:", text_color="#555").grid(row=1, column=0, sticky="w")
         self.entry_start = ctk.CTkEntry(grid, width=150, height=35, fg_color="white", 
                                         border_color="#D1D5DB", placeholder_text="YYYY-MM-DD")
@@ -81,7 +81,7 @@ class ETLApp(ctk.CTk):
         self.entry_start.grid(row=2, column=0, sticky="w", padx=(0, 30))
         self.entry_start.bind("<KeyRelease>", lambda e: self._auto_format_date(self.entry_start))
 
-        # --- Campo Fecha Fin ---
+        # --- End date ---
         ctk.CTkLabel(grid, text="Hasta:", text_color="#555").grid(row=1, column=1, sticky="w")
         self.entry_end = ctk.CTkEntry(grid, width=150, height=35, fg_color="white", 
                                       border_color="#D1D5DB", placeholder_text="YYYY-MM-DD")
@@ -89,7 +89,7 @@ class ETLApp(ctk.CTk):
         self.entry_end.grid(row=2, column=1, sticky="w")
         self.entry_end.bind("<KeyRelease>", lambda e: self._auto_format_date(self.entry_end))
         
-        # Botón Iniciar (Derecha con letras blancas)
+        # Start Button
         self.btn_run = ctk.CTkButton(
             grid, text="INICIAR PROCESO", 
             fg_color=UNIMET_ORANGE, hover_color="#d97017",
@@ -101,23 +101,23 @@ class ETLApp(ctk.CTk):
 
     def _auto_format_date(self, entry):
         """Añade guiones automáticamente y valida el formato mientras se escribe."""
-        text = entry.get().replace("-", "") # Quitar guiones actuales
+        text = entry.get().replace("-", "")
         new_text = ""
         
-        # Solo permitir números
+        # Only numbers
         text = "".join(filter(str.isdigit, text))
         
         if len(text) > 0:
             new_text = text[:4] # Año
         if len(text) > 4:
-            new_text += "-" + text[4:6] # Mes
+            new_text += "-" + text[4:6] # month
         if len(text) > 6:
-            new_text += "-" + text[6:8] # Día
+            new_text += "-" + text[6:8] # day
             
         entry.delete(0, "end")
-        entry.insert(0, new_text[:10]) # Limitar a 10 caracteres
+        entry.insert(0, new_text[:10]) # 10 char limit
 
-        # Validación visual simple
+        # Visual validation
         if len(entry.get()) == 10:
             try:
                 datetime.strptime(entry.get(), "%Y-%m-%d")
@@ -191,7 +191,7 @@ class ETLApp(ctk.CTk):
             self.after(1000, self.update_timer)
 
     def start_extraction(self):
-        # Validar fechas antes de empezar
+        # Date validation
         try:
             datetime.strptime(self.entry_start.get(), "%Y-%m-%d")
             datetime.strptime(self.entry_end.get(), "%Y-%m-%d")
@@ -199,7 +199,7 @@ class ETLApp(ctk.CTk):
             self.write_log("ERROR: Una de las fechas tiene un formato o valor inválido.")
             return
 
-        # Guardar en config.ini
+        # Save in config.ini
         self.config.set('FILTERS', 'start_date', self.entry_start.get())
         self.config.set('FILTERS', 'end_date', self.entry_end.get())
         with open(CONFIG_PATH, 'w') as f: self.config.write(f)
