@@ -1,12 +1,8 @@
 name: Supabase Keep-Alive Service
 
 on:
-  # Schedule: Runs every 3 days at 00:00 UTC.
-  # This interval ensures activity is detected before the 7-day pause limit on Supabase free tier.
   schedule:
     - cron: '0 0 */3 * *'
-  
-  # Workflow Dispatch: Allows manual execution from the GitHub Actions tab for testing/debugging.
   workflow_dispatch:
 
 jobs:
@@ -15,23 +11,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Check out the repository content to the runner
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Set up the Python environment
       - name: Setup Python Environment
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
-      # 3. Install the specific database driver
-      # We use 'psycopg2-binary' to avoid compiling from source, ensuring a faster and error-free install on Linux.
       - name: Install Dependencies
         run: pip install psycopg2-binary
 
-      # 4. Run the Python script to ping the database
-      # GitHub Secrets are injected as Environment Variables for the script to access via os.environ
       - name: Execute Keep-Alive Script
         env:
           SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
@@ -39,5 +29,5 @@ jobs:
           SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
           SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        # Ensure this path matches your structure. If file is in root, remove 'src/'
-        run: python src/keep_alive.py
+          
+        run: python keep_alive.py
