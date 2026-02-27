@@ -84,7 +84,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "id_curso": course_id,
         "id_asignatura": get_subject_code(course.get("shortname")),
         "nombre_curso": clean_name,
-        "nombre_materia": clean_name, # Added to prevent KeyErrors in DB transactions
+        "nombre_materia": clean_name, 
         "id_profesor": prof_id,
         "nombre_profesor": prof_name,
         "categoria_id": course.get("categoryid"),
@@ -97,7 +97,6 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
 
         # Enrollment Counts
         "n_estudiantes_procesados": g1.get("n_estudiantes_procesados", 0),
-        "n_estudiantes_totales": g1.get("n_estudiantes_totales", 0),
 
         # --- GROUP 1 COMPONENTS ---
         "ind_1_1_cumplimiento": g1.get("ind_1_1_cumplimiento"),

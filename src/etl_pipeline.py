@@ -12,6 +12,7 @@ from utils.filters import CourseFilter
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
 from utils.period_parser import get_academic_period 
+from utils.period_parser import get_academic_period, is_term_ready_for_analysis
 
 # --- Path Configuration ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -127,10 +128,19 @@ def run_pipeline(
     # --- FILTERING LOGIC (Centralized) ---
     courses_queue = []
     for c in raw_courses:
+        # A. Calculate the term for this specific course
+        ts_ref = c.get("startdate") or c.get("timecreated") or 0
+        term_id, _, _, _ = get_academic_period(c["fullname"], ts_ref)
+
+        # B. TEMPORAL SAFETY FILTER: Skip if the term is not ready for analysis yet
+        if not is_term_ready_for_analysis(term_id):
+            # This ignores courses from the "current" or "future" terms
+            continue
+
+        # C. Metadata & Administrative Filters
         cat_path = category_map.get(c.get("categoryid"), "")
         c_start = c.get("startdate", 0)
         
-        # Now we also pass c.get("shortname", "") to ensure safety
         if CourseFilter.is_valid_metadata(
             course_fullname=c["fullname"],
             course_shortname=c.get("shortname", ""),

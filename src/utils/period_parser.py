@@ -2,6 +2,46 @@ import re
 from datetime import datetime
 from typing import Tuple, Optional
 
+def is_term_ready_for_analysis(term_id: str) -> bool:
+    """
+    Checks if a term is finished and ready based on the current date.
+    Schedule:
+    - Term 1 (Sep-Nov): Ready from Dec 1st.
+    - Term 2 (Jan-Mar): Ready from Apr 1st.
+    - Term 3 (Apr-Jun): Ready from Jul 1st.
+    - Term I (Jul-Aug): Ready from Sep 1st.
+    """
+    now = datetime.now()
+    # Parse term_id (e.g., "24251")
+    # First 2 digits = Start Year (24 -> 2024)
+    # Next 2 digits = End Year (25 -> 2025)
+    # Last char = Term (1, 2, 3, I)
+    
+    try:
+        start_year_short = int(term_id[:2])
+        end_year_short = int(term_id[2:4])
+        term_type = term_id[4]
+        
+        # Determine the target year for the "Ready Date"
+        # Term 1 belongs to the start year, others to the end year
+        target_year = 2000 + (start_year_short if term_type == "1" else end_year_short)
+        
+        # Define the threshold date
+        if term_type == "1":
+            ready_date = datetime(target_year, 12, 1)
+        elif term_type == "2":
+            ready_date = datetime(target_year, 4, 1)
+        elif term_type == "3":
+            ready_date = datetime(target_year, 7, 1)
+        elif term_type == "I":
+            ready_date = datetime(target_year, 9, 1)
+        else:
+            return False
+            
+        return now >= ready_date
+    except:
+        return False
+
 def get_academic_period(course_fullname: str, start_timestamp: int) -> Tuple[str, str, int, str]:
     """
     Determines the academic period based on a 2-layer strategy:
@@ -24,8 +64,8 @@ def get_academic_period(course_fullname: str, start_timestamp: int) -> Tuple[str
     match = re.search(r'(\d{4})[-_\s]?([123Ii])', course_fullname)
     
     if match:
-        year_code = match.group(1)       # e.g., "2425"
-        term = match.group(2).upper()    # e.g., "1", "2", "I"
+        year_code = match.group(1)       # example: "2425"
+        term = match.group(2).upper()    # example: "1", "2", "I"
         
         # We approximate the real year based on the code (taking the first 2 digits + 2000)
         # This is an approximation for the 'anio' column, which is mostly descriptive.

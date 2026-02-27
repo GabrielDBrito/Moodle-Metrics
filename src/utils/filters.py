@@ -1,50 +1,31 @@
-from typing import Dict, Set, Tuple
 import unicodedata
+from typing import Dict, Set
 
 class CourseFilter:
     """
-    Centralizes all business rules for course inclusion/exclusion.
-    Layers:
-    1. Metadata (Name, Department, Date)
-    2. Population (Student count)
-    3. Hierarchy (Pedagogical structure)
-    4. Integrity (Empty columns check)
-    5. Maturity (Academic progress)
+    Centralizes administrative filters for course inclusion.
+    Quality and maturity filters have been disabled as per new directive
+    to show a "cruder" reality of the Moodle data.
     """
 
-    # --- 1. Metadata Config ---
-    BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD", "CÓDIGO NARANJA", "CURSO", "Código Naranja", "CODIGO NARANJA"]
+    # --- 1. Administrative Filters ---
+    # Keywords to look for in the FULLNAME (Normalized for accents later)
+    BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD", "NARANJA"]
+
+    # Specific SUBJECT CODES to block 
+    BLACKLIST_CODES = ["CODNA"]
+
     INVALID_DEPARTMENTS = {
         "POSTG", "DIDA", "AE", "U_V", 
         "UNIMET TEACHING CENTER", "SERVICIO COMUNITARIO"
     }
-    BLACKLIST_CODES = ["CODNA"]
-
-    # --- 2. Population Config ---
-    MIN_STUDENTS_REQUIRED = 5
-
-    # --- 3. Hierarchy & Design Config ---
-    # Max items allowed without hierarchy (Natural Aggregation)
-    MAX_FLAT_ITEMS = 6          
-    # % of students with manual override to accept a flat course (Rescue Clause)
-    MANUAL_GRADING_THRESHOLD = 0.90 
-
-    # --- 4. Integrity Config ---
-    # Max percentage of total grade that can be empty (0 participants)
-    # Allows small bonus activities to be empty, but not major exams.
-    MAX_MISSING_WEIGHT_TOLERANCE = 0.10 
-
-    # --- 5. Maturity Config ---
-    PASSING_GRADE = 9.5
-    MIN_MATURITY_COMPLIANCE = 60.0
-    MIN_ACCEPTABLE_AVG = 5.0
-    STRICT_COMPLIANCE_FLOOR = 80.0
 
     @staticmethod
     def _normalize_text(text: str) -> str:
-        """Helper to remove accents and convert to uppercase for safe comparison."""
+        """
+        Helper to remove accents/tildes and convert to uppercase.
+        """
         if not text: return ""
-        # Remove accents
         text = ''.join(c for c in unicodedata.normalize('NFD', text)
                       if unicodedata.category(c) != 'Mn')
         return text.upper()
@@ -52,25 +33,25 @@ class CourseFilter:
     @staticmethod
     def is_valid_metadata(
         course_fullname: str, 
-        course_shortname: str, 
+        course_shortname: str,
         category_path: str, 
         course_start_ts: int, 
         min_ts: float, 
         max_ts: float
     ) -> bool:
         """
-        Layer 1: Filters based on administrative metadata.
+        Layer 1: Filters based on administrative metadata and dates.
         """
+        # Normalize all inputs for safe comparison
         norm_name = CourseFilter._normalize_text(course_fullname)
         norm_path = CourseFilter._normalize_text(category_path)
         norm_code = CourseFilter._normalize_text(course_shortname)
 
-        # 1. Exact Code Check (The safest way)
-        # Check if the shortname starts with any blacklisted code
+        # 1. Exact Code Check (CODNA, etc)
         if any(norm_code.startswith(code) for code in CourseFilter.BLACKLIST_CODES):
             return False
 
-        # 2. Keyword Check (Normalized for accents)
+        # 2. Keyword Check (PRUEBA, NARANJA, etc)
         if any(k in norm_name for k in CourseFilter.BLACKLIST_KEYWORDS):
             return False
 
@@ -78,84 +59,8 @@ class CourseFilter:
         if any(d in norm_path for d in CourseFilter.INVALID_DEPARTMENTS):
             return False
 
-        # 4. Date Range Check
+        # 4. Date Range Check (Ventana Temporal)
         if not (min_ts <= course_start_ts <= max_ts):
-            return False
-
-        return True
-
-    @staticmethod
-    def is_valid_population(processed_count: int) -> bool:
-        """
-        Layer 2: Ensure statistical significance.
-        Courses with too few active students are volatile and unreliable.
-        """
-        return processed_count >= CourseFilter.MIN_STUDENTS_REQUIRED
-
-    @staticmethod
-    def has_valid_hierarchy(
-        num_items: int, 
-        has_explicit_weights: bool, 
-        max_grades_set: Set[float],
-        max_effective_weight: float
-    ) -> bool:
-        """
-        Layer 3 (Part A): Assessment Design Check.
-        Evaluates if the course structure implies a valid pedagogical design.
-        """
-        # Case A: Explicit Weights (Teacher Intent)
-        # If the teacher set weights manually, we respect their design.
-        if has_explicit_weights:
-            # it must have at least one significant milestone (>= 10% weight).
-            # This filters out "logbook" courses like Case 2607.
-            if num_items > 10 and max_effective_weight < 0.10:
-                return False
-            return True
-
-        # Case B: Natural Aggregation (No explicit weights)
-        # If all items have the exact same max grade (e.g. all 20), it is a flat structure.
-        # This implies no distinction between important exams and minor tasks.
-        if len(max_grades_set) == 1:
-            return False
-        
-        # If max grades vary (e.g. 20, 30, 15), it implies hierarchy -> Accept
-        return True
-
-    @staticmethod
-    def is_valid_assessment_structure(has_hierarchy: bool, override_ratio: float) -> bool:
-        """
-        Layer 3 (Part B): Final Structure Decision with 'Rescue Clause'.
-        1. If hierarchy is valid -> Accept.
-        2. If hierarchy is invalid BUT teacher entered grades manually -> Accept.
-        """
-        is_manually_graded = override_ratio >= CourseFilter.MANUAL_GRADING_THRESHOLD
-        return has_hierarchy or is_manually_graded
-
-    @staticmethod
-    def is_integrity_valid(total_missing_weight: float) -> bool:
-        """
-        Layer 4: Integrity Check.
-        Rejects courses where a significant portion of the grade (e.g. >10%) 
-        has absolutely no data (empty columns).
-        """
-        return total_missing_weight <= CourseFilter.MAX_MISSING_WEIGHT_TOLERANCE
-
-    @staticmethod
-    def is_academically_mature(average: float, compliance: float) -> bool:
-        """
-        Layer 5: Maturity Filter.
-        Ensures the course is advanced enough to report valid grades.
-        """
-        # Rule A: Zero activity / Placeholder
-        if average == 0:
-            return False
-
-        # Rule B: Too early (Very low grade + High incompletion)
-        if average < CourseFilter.MIN_ACCEPTABLE_AVG and compliance < CourseFilter.STRICT_COMPLIANCE_FLOOR:
-            return False
-
-        # Rule C: Incomplete middle (Failing grade + Mid completion)
-        if average < CourseFilter.PASSING_GRADE and compliance < CourseFilter.MIN_MATURITY_COMPLIANCE:
             return False
 
         return True
