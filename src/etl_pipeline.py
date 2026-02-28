@@ -1,9 +1,11 @@
 import sys
 import os
+import time
 import threading
+import csv
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, List
 
 # --- Internal Imports ---
 from utils.db import save_analytics_data_to_db 
@@ -11,8 +13,8 @@ from utils.config_loader import load_config
 from utils.filters import CourseFilter 
 from api.services import process_course_analytics
 from api.client import get_target_courses, call_moodle_api
-from utils.period_parser import get_academic_period 
 from utils.period_parser import get_academic_period, is_term_ready_for_analysis
+from utils.paths import get_config_path
 
 # --- Path Configuration ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -49,37 +51,37 @@ def extract_departamento(category_path: str) -> str | None:
 # --- WORKER ---
 def execute_course_task(course: Dict[str, Any], config: Dict[str, Any], category_map: Dict[int, str]) -> Dict[str, Any]:
     try:
-        # 1. Extraction & Calculation
+        # 1. Extraction (Calculates indicators and sanitizes name inside 'data')
         data = process_course_analytics(config, course)
         
         if not data:
-            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes o filtrados por calidad"}
+            return {"status": "skipped", "id": course["id"], "reason": "Datos insuficientes"}
 
         # 2. Enrichment
         category_id = data["categoria_id"]
         category_path = category_map.get(category_id, "")
         data["departamento"] = extract_departamento(category_path) or "OTRO"
         
-        ts_reference = data.get("startdate") or data.get("timecreated") or 0
-        course_name = data.get("nombre_curso", "")
+        # 3. Academic Period Determination
+        # IMPORTANT: We use the RAW course["fullname"] from Moodle, NOT the sanitized data["nombre_curso"]
+        # This ensures the parser can see the (2526-1) tags before they are removed.
+        ts_reference = course.get("startdate") or course.get("timecreated") or 0
+        raw_name = course.get("fullname", "")
         
-        id_tiempo, period_name, year, term = get_academic_period(course_name, ts_reference)
+        id_tiempo, period_name, year, term = get_academic_period(raw_name, ts_reference)
         
         data.update({
             "id_tiempo": id_tiempo,
             "nombre_periodo": period_name,
             "anio": year,
             "trimestre": term,
-            "nombre_materia": data["nombre_curso"] 
+            "nombre_materia": data["nombre_curso"] # Sanitized name for the dashboard
         })
 
-        # 3. Persistence
+        # 4. Persistence
         save_analytics_data_to_db(data)
 
-        return {
-            "status": "success", 
-            "data": data
-        }
+        return {"status": "success", "data": data}
     except Exception as e:
         return {"status": "error", "id": course["id"], "error": str(e)}
 
@@ -125,22 +127,18 @@ def run_pipeline(
         log(" [!] Error: Catálogo de cursos vacío.")
         return
 
-    # --- FILTERING LOGIC (Centralized) ---
+    # --- INITIAL FILTERING & PERIOD VALIDATION ---
     courses_queue = []
     for c in raw_courses:
-        # A. Calculate the term for this specific course
-        ts_ref = c.get("startdate") or c.get("timecreated") or 0
-        term_id, _, _, _ = get_academic_period(c["fullname"], ts_ref)
-
-        # B. TEMPORAL SAFETY FILTER: Skip if the term is not ready for analysis yet
-        if not is_term_ready_for_analysis(term_id):
-            # This ignores courses from the "current" or "future" terms
-            continue
-
-        # C. Metadata & Administrative Filters
         cat_path = category_map.get(c.get("categoryid"), "")
         c_start = c.get("startdate", 0)
         
+        # Determine term readiness before processing
+        term_id, _, _, _ = get_academic_period(c["fullname"], c_start)
+        if not is_term_ready_for_analysis(term_id):
+            continue
+
+        # Admin Metadata Filter
         if CourseFilter.is_valid_metadata(
             course_fullname=c["fullname"],
             course_shortname=c.get("shortname", ""),
@@ -153,11 +151,14 @@ def run_pipeline(
 
     total_courses = len(courses_queue)
     if total_courses == 0:
-        log(" [!] No se encontraron cursos válidos para el rango seleccionado.")
+        log(" [!] No se encontraron cursos válidos para procesar.")
         if progress_callback: progress_callback(1, 1)
         return
 
     log(f" [3/3] Procesando {total_courses} cursos...")
+
+    # For auditing: List to collect irregular scale cases
+    irregular_courses_report: List[Dict[str, Any]] = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(execute_course_task, c, config, category_map): c for c in courses_queue}
@@ -173,8 +174,20 @@ def run_pipeline(
             course_id = result.get('id') or result.get('data', {}).get('id_curso')
 
             if result["status"] == "success":
-                name = result["data"]["nombre_curso"][:30]
+                d = result["data"]
+                name = d["nombre_curso"][:30]
                 log(f" {progress_pct:.1f}% OK | ID: {course_id} | {name}")
+                
+                # --- LOCAL AUDIT CHECK ---
+                if d.get("is_irregular"):
+                    irregular_courses_report.append({
+                        "ID_Curso": d["id_curso"],
+                        "Nombre_Curso": d["nombre_curso"],
+                        "Trimestre": d["nombre_periodo"],
+                        "Profesor": d["nombre_profesor"],
+                        "Escala_Moodle": d["max_grade_config"]
+                    })
+            
             elif result["status"] == "skipped":
                 log(f" {progress_pct:.1f}% OMITIR | ID: {course_id} | {result.get('reason')}")
             else:
@@ -182,6 +195,21 @@ def run_pipeline(
 
             if progress_callback:
                 progress_callback(i, total_courses)
+
+    # --- GENERATE LOCAL AUDIT REPORT ---
+    if irregular_courses_report:
+        report_filename = "reporte_escalas_irregulares.csv"
+        report_path = get_config_path(report_filename)
+        try:
+            # utf-8-sig ensures Excel opens it correctly with accents/tildes
+            keys = irregular_courses_report[0].keys()
+            with open(report_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.DictWriter(f, fieldnames=keys)
+                writer.writeheader()
+                writer.writerows(irregular_courses_report)
+            log(f" [!] Reporte de auditoría generado: {report_filename}")
+        except Exception as e:
+            log(f" [!] Error al generar el reporte CSV local: {e}")
 
     if stop_event and stop_event.is_set():
         log("--- Proceso CANCELADO ---")

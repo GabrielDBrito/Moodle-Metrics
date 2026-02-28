@@ -67,7 +67,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
     sql_fact_course = """
         INSERT INTO hecho_experiencia_curso (
             id_curso, id_tiempo, id_asignatura, id_profesor,
-            n_estudiantes_totales,
+            n_estudiantes_totales, -- UPDATED: n_estudiantes_procesados removed
             
             ind_1_1_cumplimiento, ind_1_1_num, ind_1_1_den,
             ind_1_2_aprobacion,   ind_1_2_num, ind_1_2_den,
@@ -79,13 +79,13 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             ind_2_1_metod_activa, ind_2_1_num, ind_2_1_den,
             ind_2_2_ratio_eval,   ind_2_2_num, ind_2_2_den,
             
-            ind_3_1_excelencia,   ind_3_1_num, ind_3_1_den,
+            ind_3_1_excelencia,   ind_3_1_num, ind_3_1_den, 
             ind_3_2_feedback,     ind_3_2_num, ind_3_2_den,
             
             fecha_extraccion
         ) VALUES (
             %(id_curso)s, %(id_tiempo)s, %(id_asignatura)s, %(id_profesor)s,
-            %(n_estudiantes_totales)s,
+            %(n_estudiantes_totales)s, -- UPDATED: Using the correct key
             
             %(ind_1_1_cumplimiento)s, %(ind_1_1_num)s, %(ind_1_1_den)s,
             %(ind_1_2_aprobacion)s,   %(ind_1_2_num)s, %(ind_1_2_den)s,
@@ -106,7 +106,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             id_tiempo = EXCLUDED.id_tiempo,
             id_asignatura = EXCLUDED.id_asignatura,
             id_profesor = EXCLUDED.id_profesor,
-            n_estudiantes_totales = EXCLUDED.n_estudiantes_totales,
+            n_estudiantes_totales = EXCLUDED.n_estudiantes_totales, 
             
             ind_1_1_cumplimiento = EXCLUDED.ind_1_1_cumplimiento,
             ind_1_1_num = EXCLUDED.ind_1_1_num, ind_1_1_den = EXCLUDED.ind_1_1_den,

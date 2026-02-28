@@ -96,7 +96,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "timemodified": course.get("timemodified"),
 
         # Enrollment Counts
-        "n_estudiantes_procesados": g1.get("n_estudiantes_procesados", 0),
+        "n_estudiantes_totales": g1.get("n_estudiantes_totales", 0),
 
         # --- GROUP 1 COMPONENTS ---
         "ind_1_1_cumplimiento": g1.get("ind_1_1_cumplimiento"),
@@ -138,4 +138,9 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "ind_3_2_feedback": g3.get("ind_3_2_feedback"),
         "ind_3_2_num": g3.get("ind_3_2_num"),
         "ind_3_2_den": g3.get("ind_3_2_den"),
+
+        # --- AUDIT FIELDS ---
+        "is_irregular": g1.get("is_irregular"),
+        "max_grade_config": g1.get("max_grade_config"),
+
     }
