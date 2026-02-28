@@ -7,10 +7,22 @@ import time
 import sys
 from .paths import get_config_path
 
-# --- Environment Configuration ---
-# Use the smart path helper to find the .env file even in the executable
-ENV_PATH = get_config_path('bdd.env') 
-load_dotenv(ENV_PATH)
+
+# Try multiple sensible locations for the env file so it works both when
+# running from source (`src/db.env`) and when running from the project root
+# (e.g. after packaging the executable).
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_env_candidates = [
+    os.path.join(BASE_DIR, 'db.env'),           # project_root/db.env
+    os.path.join(BASE_DIR, 'src', 'db.env'),    # project_root/src/db.env
+    get_config_path('db.env'),                  # helper (keeps backward compatibility)
+]
+# Normalize and pick the first existing path, otherwise default to first candidate
+_env_candidates = [os.path.abspath(p) for p in _env_candidates]
+ENV_PATH = next((p for p in _env_candidates if os.path.exists(p)), _env_candidates[0])
+# Force override to ensure values from the file are loaded into os.environ
+load_dotenv(ENV_PATH, override=True)
+_ENV_CANDIDATES = _env_candidates
 
 def get_db_connection():
     """
@@ -20,7 +32,8 @@ def get_db_connection():
     sslmode = os.getenv("SUPABASE_DB_SSLMODE", "require")
     
     if not host:
-        raise ValueError("Database credentials not found. Check bdd.env location.")
+        tried = ', '.join(_ENV_CANDIDATES)
+        raise ValueError(f"Database credentials not found. Checked env files: {tried}")
 
     return psycopg2.connect(
         host=host,
@@ -72,7 +85,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             ind_1_1_cumplimiento, ind_1_1_num, ind_1_1_den,
             ind_1_2_aprobacion,   ind_1_2_num, ind_1_2_den,
             ind_1_3_nota_promedio, ind_1_3_num, ind_1_3_den,
-            ind_1_3_nota_mediana, ind_1_3_nota_desviacion,
+            ind_1_3_nota_mediana, 
             ind_1_4_participacion, ind_1_4_num, ind_1_4_den,
             ind_1_5_finalizacion,  ind_1_5_num, ind_1_5_den,
             
@@ -90,7 +103,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             %(ind_1_1_cumplimiento)s, %(ind_1_1_num)s, %(ind_1_1_den)s,
             %(ind_1_2_aprobacion)s,   %(ind_1_2_num)s, %(ind_1_2_den)s,
             %(ind_1_3_nota_promedio)s, %(ind_1_3_num)s, %(ind_1_3_den)s,
-            %(ind_1_3_nota_mediana)s, %(ind_1_3_nota_desviacion)s,
+            %(ind_1_3_nota_mediana)s, 
             %(ind_1_4_participacion)s, %(ind_1_4_num)s, %(ind_1_4_den)s,
             %(ind_1_5_finalizacion)s,  %(ind_1_5_num)s, %(ind_1_5_den)s,
             
@@ -117,7 +130,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             ind_1_3_nota_promedio = EXCLUDED.ind_1_3_nota_promedio,
             ind_1_3_num = EXCLUDED.ind_1_3_num, ind_1_3_den = EXCLUDED.ind_1_3_den,
             ind_1_3_nota_mediana = EXCLUDED.ind_1_3_nota_mediana,
-            ind_1_3_nota_desviacion = EXCLUDED.ind_1_3_nota_desviacion,
+            
             
             ind_1_4_participacion = EXCLUDED.ind_1_4_participacion,
             ind_1_4_num = EXCLUDED.ind_1_4_num, ind_1_4_den = EXCLUDED.ind_1_4_den,
