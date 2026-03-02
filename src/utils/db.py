@@ -13,9 +13,9 @@ from .paths import get_config_path
 # (e.g. after packaging the executable).
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _env_candidates = [
-    os.path.join(BASE_DIR, 'db.env'),           # project_root/db.env
-    os.path.join(BASE_DIR, 'src', 'db.env'),    # project_root/src/db.env
-    get_config_path('db.env'),                  # helper (keeps backward compatibility)
+    os.path.join(BASE_DIR, 'bdd.env'),           # project_root/bdd.env
+    os.path.join(BASE_DIR, 'src', 'bdd.env'),    # project_root/src/bdd.env
+    get_config_path('bdd.env'),                  # helper (keeps backward compatibility)
 ]
 # Normalize and pick the first existing path, otherwise default to first candidate
 _env_candidates = [os.path.abspath(p) for p in _env_candidates]
