@@ -1,6 +1,6 @@
 import statistics
 from typing import Dict, List, Optional, Any
-# No longer imports CourseFilter as quality checks are removed
+from utils.filters import CourseFilter
 
 # --- BUSINESS LOGIC CONFIGURATION ---
 TARGET_SCALE = 20.0
@@ -42,7 +42,7 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
 
     normalize_divisor = config_max_grade if config_max_grade > 0 else 1.0
     should_normalize = (config_max_grade > 25.0) or (abs(config_max_grade - 20.0) > 0.1)
-   # We identify if it's a "suspicious" scale (other than 20)
+    # We identify if it's a "suspicious" scale (other than 20)
     # but we exclude the known bug (Max > 40 with scores <= 22)
     is_scale_bug = should_normalize and config_max_grade > 40.0 and global_max_observed <= 22.0
     is_irregular = (config_max_grade != 20.0 and config_max_grade > 0) and not is_scale_bug
@@ -122,6 +122,9 @@ def calculate_group1_metrics(grades_data: Dict[str, Any]) -> Optional[Dict[str, 
     # 'processed_count' is now the total number of students
     processed_count = total_valid_students
     if processed_count == 0: return None
+
+    if not CourseFilter.is_valid_population(processed_count):
+        return None
 
     return {
         "n_estudiantes_totales": processed_count,

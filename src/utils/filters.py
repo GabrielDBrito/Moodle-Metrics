@@ -13,12 +13,15 @@ class CourseFilter:
     BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD", "NARANJA"]
 
     # Specific SUBJECT CODES to block 
-    BLACKLIST_CODES = ["CODNA"]
+    BLACKLIST_CODES = ["CODNA", "PEE", "FCES", "UNIVIR", "Taller"]
 
     INVALID_DEPARTMENTS = {
         "POSTG", "DIDA", "AE", "U_V", 
-        "UNIMET TEACHING CENTER", "SERVICIO COMUNITARIO"
+        "UNIMET TEACHING CENTER", "SERVICIO COMUNITARIO", "Aulas de Entrenamiento y Capacitación", "Archivos UNIMET Virtual", "Prácticas Aulas Virtuales", "Respaldos_Biblioteca"
     }
+
+    # --- 2. Population Config ---
+    MIN_STUDENTS_REQUIRED = 5
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -64,3 +67,11 @@ class CourseFilter:
             return False
 
         return True
+    
+    @staticmethod
+    def is_valid_population(total_students: int) -> bool:
+        """
+        Layer 2: Ensure the course has a minimum of students.
+        Filters out tutorials, thesis defenses, or empty shells.
+        """
+        return total_students >= CourseFilter.MIN_STUDENTS_REQUIRED
