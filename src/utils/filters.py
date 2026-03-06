@@ -10,7 +10,7 @@ class CourseFilter:
     BLACKLIST_KEYWORDS = ["PRUEBA", "COPIA", "SANDPIT", "COPIA DE SEGURIDAD", "NARANJA"]
     
     # Specific SUBJECT CODES to block (Exact match)
-    BLACKLIST_CODES = ["CODNA", "PEE", "FCES", "UNIVIR", "TALLER", "NUEVO", "PADI", "PDU", "NUEVO"] 
+    BLACKLIST_CODES = ["CODNA", "PEE", "FCES", "UNIVIR", "TALLER", "NUEVO", "PADI", "PDU", "NUEVO", "BDRA"] 
 
     # Specific department names to block (Exact match)
     INVALID_DEPARTMENTS = {
