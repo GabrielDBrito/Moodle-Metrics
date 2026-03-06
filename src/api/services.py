@@ -121,6 +121,10 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "ind_1_5_num": g1.get("ind_1_5_num"),
         "ind_1_5_den": g1.get("ind_1_5_den"),
 
+        "ind_1_6_rango_0_9": g1.get("ind_1_6_rango_0_9"),
+        "ind_1_6_rango_10_15": g1.get("ind_1_6_rango_10_15"),
+        "ind_1_6_rango_16_20": g1.get("ind_1_6_rango_16_20"),
+
         # --- GROUP 2 COMPONENTS ---
         "ind_2_1_metod_activa": g2.get("ind_2_1_metod_activa"),
         "ind_2_1_num": g2.get("ind_2_1_num"),

@@ -88,6 +88,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             ind_1_3_nota_mediana, 
             ind_1_4_participacion, ind_1_4_num, ind_1_4_den,
             ind_1_5_finalizacion,  ind_1_5_num, ind_1_5_den,
+            ind_1_6_rango_0_9, ind_1_6_rango_10_15, ind_1_6_rango_16_20,
             
             ind_2_1_metod_activa, ind_2_1_num, ind_2_1_den,
             ind_2_2_ratio_eval,   ind_2_2_num, ind_2_2_den,
@@ -106,6 +107,7 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             %(ind_1_3_nota_mediana)s, 
             %(ind_1_4_participacion)s, %(ind_1_4_num)s, %(ind_1_4_den)s,
             %(ind_1_5_finalizacion)s,  %(ind_1_5_num)s, %(ind_1_5_den)s,
+            %(ind_1_6_rango_0_9)s, %(ind_1_6_rango_10_15)s, %(ind_1_6_rango_16_20)s,
             
             %(ind_2_1_metod_activa)s, %(ind_2_1_num)s, %(ind_2_1_den)s,
             %(ind_2_2_ratio_eval)s,   %(ind_2_2_num)s, %(ind_2_2_den)s,
@@ -137,6 +139,10 @@ def save_analytics_data_to_db(data: Dict[str, Any]):
             
             ind_1_5_finalizacion = EXCLUDED.ind_1_5_finalizacion,
             ind_1_5_num = EXCLUDED.ind_1_5_num, ind_1_5_den = EXCLUDED.ind_1_5_den,
+
+            ind_1_6_rango_0_9 = EXCLUDED.ind_1_6_rango_0_9,
+            ind_1_6_rango_10_15 = EXCLUDED.ind_1_6_rango_10_15,
+            ind_1_6_rango_16_20 = EXCLUDED.ind_1_6_rango_16_20,
             
             ind_2_1_metod_activa = EXCLUDED.ind_2_1_metod_activa,
             ind_2_1_num = EXCLUDED.ind_2_1_num, ind_2_1_den = EXCLUDED.ind_2_1_den,
