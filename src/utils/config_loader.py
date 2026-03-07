@@ -12,21 +12,42 @@ def load_config():
     """
     config_path = get_config_path('config.ini')
 
-    # 2. Validate existence
+    # 1. Validate file existence
     if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Configuration file not found at: {config_path}\nAsegúrate de que config.ini esté en la misma carpeta que el ejecutable.")
+        raise FileNotFoundError(f"Configuration file not found at: {config_path}\n"
+                                f"Asegúrate de que config.ini esté en la misma carpeta que el ejecutable.")
 
-    # 3. Parse the file
+    # 2. Parse the file
     config = configparser.ConfigParser()
-    config.read(config_path)
+    config.read(config_path, encoding='utf-8')
 
-    # 4. We ensure that critical sections exist to prevent errors
+    # 3. Ensure critical Moodle section exists
     if 'MOODLE' not in config:
         raise ValueError("El archivo config.ini no tiene la sección [MOODLE]")
     
+    # 4. Ensure FILTERS section exists with defaults
     if 'FILTERS' not in config:
-        # If it doesn't exist, we inject default values
-        config['FILTERS'] = {'start_date': '2023-01-01', 'end_date': '2025-12-31'}
+        config['FILTERS'] = {
+            'start_date': '2024-08-01', 
+            'end_date': '2025-10-15'
+        }
+
+    # 5. Ensure THRESHOLDS section exists for GUI parameterization
+    # These values can be updated from the new settings tab in the GUI
+    if 'THRESHOLDS' not in config:
+        config['THRESHOLDS'] = {
+            'min_students': '5',
+            'excellence_score': '18.0',
+            'active_density': '0.40'
+        }
+    else:
+        # Ensure individual keys exist even if section was present
+        if 'min_students' not in config['THRESHOLDS']:
+            config['THRESHOLDS']['min_students'] = '5'
+        if 'excellence_score' not in config['THRESHOLDS']:
+            config['THRESHOLDS']['excellence_score'] = '18.0'
+        if 'active_density' not in config['THRESHOLDS']:
+            config['THRESHOLDS']['active_density'] = '0.40'
 
     print(f"Configuration loaded successfully from: {config_path}")
     return config

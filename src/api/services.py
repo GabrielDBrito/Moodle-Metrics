@@ -31,23 +31,33 @@ def identify_instructor(course_id: int, config: Dict[str, Any]) -> Tuple[int, st
         courseid=course_id
     ) or []
 
-    # Common Moodle role IDs for instructors
-    for role_id in (3, 4, 1):
-        for user in users:
-            for role in user.get("roles", []):
-                if role.get("roleid") == role_id:
-                    return user["id"], user["fullname"]
+    for user in users:
+        for role in user.get("roles", []):
+            if role.get("roleid") in (3, 4, 1):
+                return user["id"], user["fullname"]
 
     return 0, "Unassigned"
 
-def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def process_course_analytics(config: Any, course: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Main orchestrator for course data extraction and KPI calculation.
-    Collects raw components (num/den) for accurate BI aggregation.
+    Handles dynamic parameters from THRESHOLDS section in config.ini.
     """
     course_id = course["id"]
 
-    # 1. Fetch raw data from Moodle API
+    # --- 0. Extract Dynamic Thresholds from Config ---
+    # These parameters are passed to the indicator functions for modular logic.
+    thresholds = config['THRESHOLDS']
+    params = {
+        'min_students': int(thresholds.get('min_students', 5)),
+        'excellence_score': float(thresholds.get('excellence_score', 18.0)),
+        'active_density': float(thresholds.get('active_density', 0.40)),
+        # Whitelist remains a hidden business rule (5%) as requested, 
+        # but is added to params for code independence.
+        'whitelist_min': 0.05 
+    }
+
+    # 1. Fetch raw data from Moodle API (Grades)
     grades_report = call_moodle_api(
         config["MOODLE"],
         "gradereport_user_get_grade_items",
@@ -59,7 +69,8 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         return None
 
     # 2. Calculate Group 1 Metrics (Results & Performance)
-    g1 = calculate_group1_metrics(grades_report)
+    # Passes 'params' to handle dynamic student counts and activity density.
+    g1 = calculate_group1_metrics(grades_report, params)
     if not g1:
         return None
 
@@ -72,14 +83,14 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
     g2 = calculate_design_metrics(course_contents, grades_report) or {}
 
     # 4. Calculate Group 3 Metrics (Behavior & Interaction)
-    g3 = calculate_group3_metrics_from_grades(grades_report) or {}
+    # Passes 'params' to handle the dynamic excellence threshold (e.g. 18/20).
+    g3 = calculate_group3_metrics_from_grades(grades_report, params) or {}
 
-    # 5. Identify course owner
+    # 5. Metadata Enrichment
     prof_id, prof_name = identify_instructor(course_id, config)
-    
     clean_name = get_clean_course_name(course.get("fullname"))
 
-    # Consolidated results including raw components for BI
+    # Consolidated results including raw components for BI aggregation
     return {
         "id_curso": course_id,
         "id_asignatura": get_subject_code(course.get("shortname")),
@@ -95,7 +106,7 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "timecreated": course.get("timecreated"),
         "timemodified": course.get("timemodified"),
 
-        # Enrollment Counts
+        # Population
         "n_estudiantes_totales": g1.get("n_estudiantes_totales", 0),
 
         # --- GROUP 1 COMPONENTS ---
@@ -108,8 +119,8 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "ind_1_2_den": g1.get("ind_1_2_den"),
 
         "ind_1_3_nota_promedio": g1.get("ind_1_3_nota_promedio"),
-        "ind_1_3_num": g1.get("ind_1_3_num"), # Sum of grades
-        "ind_1_3_den": g1.get("ind_1_3_den"), # Count of grades
+        "ind_1_3_num": g1.get("ind_1_3_num"), 
+        "ind_1_3_den": g1.get("ind_1_3_den"), 
         "ind_1_3_nota_mediana": g1.get("ind_1_3_nota_mediana"),
         "ind_1_3_nota_desviacion": g1.get("ind_1_3_nota_desviacion"),
 
@@ -117,14 +128,15 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         "ind_1_4_num": g1.get("ind_1_4_num"),
         "ind_1_4_den": g1.get("ind_1_4_den"),
 
-        "ind_1_5_rango_0_25": g1.get("ind_1_5_rango_0_25"),
-        "ind_1_5_rango_25_50": g1.get("ind_1_5_rango_25_50"),
-        "ind_1_5_rango_50_75": g1.get("ind_1_5_rango_50_75"),
-        "ind_1_5_rango_75_100": g1.get("ind_1_5_rango_75_100"),
+        # Group 1 Distributions (Frequencies)
+        "ind_1_5_rango_0_25": g1.get("ind_1_5_rango_0_25", 0),
+        "ind_1_5_rango_25_50": g1.get("ind_1_5_rango_25_50", 0),
+        "ind_1_5_rango_50_75": g1.get("ind_1_5_rango_50_75", 0),
+        "ind_1_5_rango_75_100": g1.get("ind_1_5_rango_75_100", 0),
 
-        "ind_1_6_rango_0_9": g1.get("ind_1_6_rango_0_9"),
-        "ind_1_6_rango_10_15": g1.get("ind_1_6_rango_10_15"),
-        "ind_1_6_rango_16_20": g1.get("ind_1_6_rango_16_20"),
+        "ind_1_6_rango_0_9": g1.get("ind_1_6_rango_0_9", 0),
+        "ind_1_6_rango_10_15": g1.get("ind_1_6_rango_10_15", 0),
+        "ind_1_6_rango_16_20": g1.get("ind_1_6_rango_16_20", 0),
 
         # --- GROUP 2 COMPONENTS ---
         "ind_2_1_metod_activa": g2.get("ind_2_1_metod_activa"),
@@ -147,5 +159,4 @@ def process_course_analytics(config: Dict[str, Any], course: Dict[str, Any]) -> 
         # --- AUDIT FIELDS ---
         "is_irregular": g1.get("is_irregular"),
         "max_grade_config": g1.get("max_grade_config"),
-
     }
