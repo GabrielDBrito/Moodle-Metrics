@@ -1,59 +1,44 @@
 import os
-import psycopg2
+import requests
+import sys
 
-def ping_database():
+def ping_supabase():
     """
-    Connects to the Supabase PostgreSQL database and performs a lightweight 
-    read operation to prevent the project from being paused due to inactivity.
+    Sends a REST API request to Supabase to simulate real usage activity.
+    This prevents the project from being paused in the free tier.
     """
     try:
-        # Fetch credentials from environment variables (provided by GitHub Actions)
-        db_host = os.environ.get("SUPABASE_DB_HOST")
-        db_port = os.environ.get("SUPABASE_DB_PORT")
-        db_name = os.environ.get("SUPABASE_DB_NAME")
-        db_user = os.environ.get("SUPABASE_DB_USER")
-        db_pass = os.environ.get("SUPABASE_DB_PASSWORD")
+        # Load environment variables
+        supabase_url = os.environ.get("SUPABASE_URL")
+        supabase_key = os.environ.get("SUPABASE_ANON_KEY")
 
-        # Validate that all required secrets are loaded
-        if not all([db_host, db_port, db_name, db_user, db_pass]):
-            print("ERROR CRÍTICO: Faltan credenciales de la base de datos en GitHub Secrets.")
-            exit(1)
+        if not all([supabase_url, supabase_key]):
+            print("ERROR: Missing Supabase credentials in GitHub Secrets.")
+            sys.exit(1)
 
-        print(f"Intentando conectar al host: {db_host}...")
+        # Endpoint (usa una tabla real de tu modelo)
+        endpoint = f"{supabase_url}/rest/v1/dim_tiempo?select=id_tiempo&limit=1"
 
-        # Establish connection with SSL required for Supabase
-        connection = psycopg2.connect(
-            host=db_host,
-            port=db_port,
-            database=db_name,
-            user=db_user,
-            password=db_pass,
-            sslmode='require',
-            connect_timeout=20
-        )
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}"
+        }
 
-        cursor = connection.cursor()
-        
-        # Querying an actual table ensures Supabase registers this as real storage/compute activity.
-        print("Ejecutando consulta de lectura en la tabla 'dim_tiempo'...")
-        cursor.execute("SELECT id_tiempo FROM dim_tiempo LIMIT 1;")
-        
-        result = cursor.fetchone()
-        
-        if result:
-            print(f"Ping exitoso. Registro detectado: {result[0]}")
+        print("Enviando request REST a Supabase...")
+
+        response = requests.get(endpoint, headers=headers, timeout=20)
+
+        if response.status_code == 200:
+            print("Ping exitoso (REST API). Supabase activo.")
+            print(f"Respuesta: {response.json()}")
         else:
-            print("Ping exitoso. Conexión establecida (la tabla dim_tiempo está vacía).")
-            
-        # Clean up connections
-        cursor.close()
-        connection.close()
-        print("Conexión cerrada correctamente.")
+            print(f"Error en request: {response.status_code} - {response.text}")
+            sys.exit(1)
 
     except Exception as e:
-        print(f"Error al enviar el latido a la base de datos: {e}")
-        # Force exit code 1 to make the GitHub Action fail and send you an email alert
-        exit(1)
+        print(f"Error en keep-alive: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    ping_database()
+    ping_supabase()
