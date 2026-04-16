@@ -2,8 +2,11 @@ name: Supabase Keep-Alive Service
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # diario (UTC)
+    - cron: '0 0 * * *'
   workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   database-ping:
